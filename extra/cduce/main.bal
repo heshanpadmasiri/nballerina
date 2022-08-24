@@ -1,6 +1,12 @@
 import ballerina/io;
-import wso2/nballerina.types as types;
+import wso2/nballerina.front.syntax as s;
 
 public function main() {
-	io:println(types:UT_NIL);
+	io:println("Helloe");
+}
+
+function compileBalFile(string filePath) returns s:ModulePart|error {
+    string[] lines = check io:fileReadLines(filePath);
+    s:SourceFile sourceFile = s:createSourceFile(lines, { filename: filePath });
+    return s:parseModulePart(check s:scanModulePart(sourceFile, 0));
 }

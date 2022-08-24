@@ -9,6 +9,9 @@ all: $(CDUCE_JAR)
 clean:
 	rm -f $(CDUCE_JAR)
 
+test: $(COMPILER_PACK)
+	bal test
+
 $(CDUCE_JAR): $(CDUCE_SRC) $(COMPILER_PACK)
 	bal build --target-dir ../../build/extra $(BAL_BUILD_FLAGS)
 
