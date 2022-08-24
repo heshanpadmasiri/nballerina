@@ -8,8 +8,10 @@ type TranspileTestCase [string, string[]];
 @test:Config {
     dataProvider: transpileTestCaseProvider
 }
-function testTranspile(string balFilePath, string[] expectedResult) returns error? {
+function testTranspile(string balFilePath, string[] expected) returns error? {
     s:ModulePart modulePart = check compileBalFile(balFilePath);
+    string[] actual = transpileModulePart(modulePart);
+    test:assertEquals(actual, expected);
 }
 
 
