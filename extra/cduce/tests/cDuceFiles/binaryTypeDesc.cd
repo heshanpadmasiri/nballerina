@@ -1,0 +1,5 @@
+type T1 = Int | String;;
+type T2 = T1 & 0--255;;
+type T3 = T1 | Float;;
+type T4 = Int | String | Float;;
+type T5 = Int & 0--255;;

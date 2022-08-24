@@ -36,10 +36,15 @@ function typeDescToCDuce(s:TypeDesc td) returns string {
     if td is s:BuiltinTypeDesc {
         return builtinTypeDescToCDuce(td);
     }
-    panic error("not implemented");
+    else if td is s:BinaryTypeDesc {
+        return binaryTypeToCDuce(td);
+    }
+    else if td is s:TypeDescRef {
+        return td.typeName;
+    }
+    panic error(td.toString() + "not implemented");
 }
 
-public type SubsetBuiltinTypeName "any"|"anydata"|"boolean"|"byte"|"int"|"decimal"|"float"|"string"|"error";
 function builtinTypeDescToCDuce(s:BuiltinTypeDesc td) returns string {
     match td.builtinTypeName {
         // TODO: this should be a a warning (CDuce any includes error)
@@ -52,5 +57,10 @@ function builtinTypeDescToCDuce(s:BuiltinTypeDesc td) returns string {
         "float" => { return "Float"; }
         "string" => { return "String"; }
     }
-    panic error("not implemented");
+    panic error(td.toString() + "not implemented");
+}
+
+function binaryTypeToCDuce(s:BinaryTypeDesc td) returns string {
+    string seperator = " " + td.op + " ";
+    return seperator.'join(...from var operand in td.tds select typeDescToCDuce(operand));
 }
