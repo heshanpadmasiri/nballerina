@@ -1,8 +1,10 @@
 type T1 any;
-type T2 anydata;
-type T3 boolean;
-type T4 byte;
-type T5 int;
-type T6 decimal;
-type T7 float;
-type T8 string;
+type T2 boolean;
+type T3 byte;
+type T4 int;
+type T5 float;
+type T6 string;
+type T7 ();
+type T8 null;
+type T9 error;
+type T11 decimal;

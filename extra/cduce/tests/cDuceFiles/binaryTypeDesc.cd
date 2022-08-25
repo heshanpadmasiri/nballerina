@@ -1,5 +1,10 @@
-type T1 = Int | String;;
-type T2 = T1 & 0--255;;
-type T3 = T1 | Float;;
-type T4 = Int | String | Float;;
-type T5 = Int & 0--255;;
+type BInt = Int;;
+type BString = String;;
+type BByte = 0--255;;
+type BFloat = Float;;
+
+type T1 = BInt | BString;;
+type T2 = T1 & BByte;;
+type T3 = T1 | BFloat;;
+type T4 = BInt | BString | BFloat;;
+type T5 = BInt & BByte;;
