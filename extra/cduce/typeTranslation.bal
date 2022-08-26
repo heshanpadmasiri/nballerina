@@ -4,7 +4,7 @@ type TypeRef string;
 type BaseType s:BuiltinTypeName|"list"|"top";
 
 // TODO: turn panics to warnings
-function transpileModulePart(s:ModulePart modulePart) returns string[] {
+function transpileModulePart(s:ModulePart modulePart) returns string[]|error {
     if modulePart.importDecls.length() != 0 {
         panic error("imports");
     }
@@ -13,7 +13,7 @@ function transpileModulePart(s:ModulePart modulePart) returns string[] {
         if defn !is s:TypeDefn {
             panic error("non-type defns");
         }
-        var [name, definition] = typeDefnToCDuce(cx, defn);
+        var [name, definition] = check typeDefnToCDuce(cx, defn);
         cx.addTypeDefn(name, definition);
     }
     return cx.finalize();
@@ -105,12 +105,12 @@ class TranspileContext {
 
 }
 
-function typeDefnToCDuce(TranspileContext cx, s:TypeDefn defn) returns [string, string] {
-    string definition = typeDescToCDuce(cx, defn.td);
+function typeDefnToCDuce(TranspileContext cx, s:TypeDefn defn) returns [string, string]|error {
+    string definition = check typeDescToCDuce(cx, defn.td);
     return [defn.name, definition];
 }
 
-function typeDescToCDuce(TranspileContext cx, s:TypeDesc td) returns string {
+function typeDescToCDuce(TranspileContext cx, s:TypeDesc td) returns string|error {
     if td is s:BuiltinTypeDesc {
         return cx.basetypeToCDuce(td.builtinTypeName);
     }
@@ -126,32 +126,59 @@ function typeDescToCDuce(TranspileContext cx, s:TypeDesc td) returns string {
     panic error(td.toString() + "not implemented");
 }
 
-function binaryTypeToCDuce(TranspileContext cx, s:BinaryTypeDesc td) returns string {
+function binaryTypeToCDuce(TranspileContext cx, s:BinaryTypeDesc td) returns string|error {
     string seperator = " " + td.op + " ";
-    return seperator.'join(...from var operand in td.tds select typeDescToCDuce(cx, operand));
+    return seperator.'join(...from var operand in td.tds select check typeDescToCDuce(cx, operand));
 }
 
-function constructorTypeDescToCDuce(TranspileContext cx, s:ConstructorTypeDesc td) returns string {
+function constructorTypeDescToCDuce(TranspileContext cx, s:ConstructorTypeDesc td) returns string|error {
     if td is s:TupleTypeDesc {
         return tupleTypeDescToCDuce(cx, td);
+    }
+    else if td is s:ArrayTypeDesc {
+        return arrayTypeDescToCDuce(cx, td);
     }
     panic error(td.toString() + "not implemented");
 }
 
-function tupleTypeDescToCDuce(TranspileContext cx, s:TupleTypeDesc td) returns string {
+function tupleTypeDescToCDuce(TranspileContext cx, s:TupleTypeDesc td) returns string|error {
+    return listTypeDescToCDuceInner(cx, td.members, td.rest);
+}
+
+function arrayTypeDescToCDuce(TranspileContext cx, s:ArrayTypeDesc td) returns string|error {
+    string[] body = [];
+    foreach var dimension in td.dimensions {
+        if dimension is () {
+            body.push(check listTypeDescToCDuceInner(cx, [], td.member));
+        }
+        else if dimension is s:IntLiteralExpr {
+            int size = dimension.base is 10 ? check int:fromString(dimension.digits) : check int:fromHexString(dimension.digits);
+            body.push(check listTypeDescToCDuceInner(cx, from var _ in 0..<size select td.member, ()));
+        }
+        else {
+            panic error("non integer dimensions not implemented");
+        }
+    }
+    string defn = " ".'join(...body);
+    if body.length() > 1 {
+        defn = "[" + defn + "]";
+    }
+    return defn;
+}
+
+function listTypeDescToCDuceInner(TranspileContext cx, s:TypeDesc[] members, s:TypeDesc? rest) returns string|error {
     string[] body = ["["];
-    foreach int i in 0 ..< td.members.length() {
+    foreach int i in 0 ..< members.length() {
         if i > 0 {
             body.push(" ");
         }
-        body.push(typeDescToCDuce(cx, td.members[i]));
+        body.push(check typeDescToCDuce(cx, members[i]));
     }
-    s:TypeDesc? rest = td.rest;
     if rest != () {
         if body.length() != 1 {
             body.push(" ");
         }
-        body.push(typeDescToCDuce(cx, rest) + "*");
+        body.push(check typeDescToCDuce(cx, rest) + "*");
     }
     body.push("]");
     return "".'join(...body);

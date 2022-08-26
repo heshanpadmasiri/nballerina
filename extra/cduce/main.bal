@@ -6,7 +6,7 @@ public function main(string filePath) returns error? {
     s:ModulePart module = check compileBalFile(filePath);
     string filename = check file:basename(filePath);
     string outputName = filename.substring(0, filename.length() - 4) + ".cd";
-    string[] outputBody = transpileModulePart(module);
+    string[] outputBody = check transpileModulePart(module);
     return io:fileWriteLines(outputName, outputBody);
 }
 
