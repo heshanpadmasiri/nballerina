@@ -1,10 +1,10 @@
-type BInt = Int;;
-type BString = String;;
-type BByte = 0--255;;
-type BFloat = Float;;
+type BInt = Int
+type BString = String
+type BByte = 0--255
+type BFloat = Float
 
-type T1 = BInt | BString;;
-type T2 = T1 & BByte;;
-type T3 = T1 | BFloat;;
-type T4 = BInt | BString | BFloat;;
-type T5 = BInt & BByte;;
+type T1 = BInt | BString
+type T2 = T1 & BByte
+type T3 = T1 | BFloat
+type T4 = BInt | BString | BFloat
+type T5 = BInt & BByte

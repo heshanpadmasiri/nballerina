@@ -81,9 +81,9 @@ class TranspileContext {
     }
 
     function finalize() returns string[] {
-        string[] output = from var line in self.baseTypeDefns select self.finalizeLine(line);
+        string[] output = from var line in self.baseTypeDefns select line;
         output.push("");
-        output.push(...(from var line in self.lines select self.finalizeLine(line)));
+        output.push(...(from var line in self.lines select line));
         return output;
     }
 
@@ -97,13 +97,6 @@ class TranspileContext {
         return "B" + firstChar + typeName.substring(1);
     }
 
-
-    private function finalizeLine(string line) returns string {
-        if line.length() > 0 {
-            return line + ";;";
-        }
-        return line;
-    }
 
     private function createUnion(TypeRef[] refs) returns string {
         string seperator = " | ";
@@ -127,10 +120,39 @@ function typeDescToCDuce(TranspileContext cx, s:TypeDesc td) returns string {
     else if td is s:TypeDescRef {
         return td.typeName;
     }
+    else if td is s:ConstructorTypeDesc {
+        return constructorTypeDescToCDuce(cx, td);
+    }
     panic error(td.toString() + "not implemented");
 }
 
 function binaryTypeToCDuce(TranspileContext cx, s:BinaryTypeDesc td) returns string {
     string seperator = " " + td.op + " ";
     return seperator.'join(...from var operand in td.tds select typeDescToCDuce(cx, operand));
+}
+
+function constructorTypeDescToCDuce(TranspileContext cx, s:ConstructorTypeDesc td) returns string {
+    if td is s:TupleTypeDesc {
+        return tupleTypeDescToCDuce(cx, td);
+    }
+    panic error(td.toString() + "not implemented");
+}
+
+function tupleTypeDescToCDuce(TranspileContext cx, s:TupleTypeDesc td) returns string {
+    string[] body = ["["];
+    foreach int i in 0 ..< td.members.length() {
+        if i > 0 {
+            body.push(" ");
+        }
+        body.push(typeDescToCDuce(cx, td.members[i]));
+    }
+    s:TypeDesc? rest = td.rest;
+    if rest != () {
+        if body.length() != 1 {
+            body.push(" ");
+        }
+        body.push(typeDescToCDuce(cx, rest) + "*");
+    }
+    body.push("]");
+    return "".'join(...body);
 }

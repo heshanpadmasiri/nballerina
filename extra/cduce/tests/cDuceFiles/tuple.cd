@@ -1,0 +1,19 @@
+type BInt = Int
+type BString = String
+type BNull = `null
+type BBoolean = Bool
+type BError = `error
+type BTop = BAny | BError
+type BList = [BTop*]
+type BAny = BNull | BString | BInt | BBoolean | BList
+
+type T1 = [BInt]
+type T2 = [BInt BString]
+type T3 = [BInt BInt BInt*]
+type T4 = [BInt BString BInt*]
+type T5 = [BInt BString BString*]
+type T6 = [BAny]
+type T7 = [BInt BAny]
+type T8 = [BInt BAny*]
+type T9 = [BAny*]
+type T10 = [BInt*]
