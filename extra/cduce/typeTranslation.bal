@@ -13,7 +13,8 @@ function transpileModulePart(s:ModulePart modulePart) returns string[] {
         if defn !is s:TypeDefn {
             panic error("non-type defns");
         }
-        cx.addLine(typeDefnToCDuce(cx, defn));
+        var [name, definition] = typeDefnToCDuce(cx, defn);
+        cx.addTypeDefn(name, definition);
     }
     return cx.finalize();
 }
@@ -79,10 +80,6 @@ class TranspileContext {
         return name;
     }
 
-    function addLine(string... lines) {
-        self.lines.push(...lines);
-    }
-
     function finalize() returns string[] {
         string[] output = from var line in self.baseTypeDefns select self.finalizeLine(line);
         output.push("");
@@ -90,8 +87,9 @@ class TranspileContext {
         return output;
     }
 
-    private function addTypeDefn(string name, string definition, string[] buffer) {
-        buffer.push(string `type ${name} = ${definition}`);
+    function addTypeDefn(string name, string definition, string[]? buffer=()) {
+        string[] targetBuffer = buffer ?: self.lines; 
+        targetBuffer.push(string `type ${name} = ${definition}`);
     }
 
     private function baseTypeName(string typeName) returns string {
@@ -114,9 +112,9 @@ class TranspileContext {
 
 }
 
-function typeDefnToCDuce(TranspileContext cx, s:TypeDefn defn) returns string {
+function typeDefnToCDuce(TranspileContext cx, s:TypeDefn defn) returns [string, string] {
     string definition = typeDescToCDuce(cx, defn.td);
-    return string `type ${defn.name} = ${definition}`;
+    return [defn.name, definition];
 }
 
 function typeDescToCDuce(TranspileContext cx, s:TypeDesc td) returns string {
