@@ -1,0 +1,18 @@
+type BInt = Int
+type BString = String
+type BNull = `null
+type BBoolean = Bool
+type BError = `error
+type BTop = BAny | BError
+type BList = [BTop*]
+type BAny = BNull | BString | BInt | BBoolean | BList
+
+type M1 = { l1 = BInt; l2 = BString; }
+type M2 = { }
+type M3 = { l1 = [BInt BString]; }
+type L1 = [BInt*]
+type M4 = { l1 = L1; m1 = M1; }
+type M5 = { l1 = BInt; l2 = BString; l3 = [BInt*]; .. }
+type M6 = { l1 = BInt; l2 = BString; l3 = [BInt*]; }
+type M7 = { l1 = BInt; l2 = BString; l3 = [BAny*]; .. }
+type M8 = { l1 = BInt; l2 = BString; l3 = [BAny*]; }

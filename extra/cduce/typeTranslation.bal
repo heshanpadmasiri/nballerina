@@ -138,7 +138,26 @@ function constructorTypeDescToCDuce(TranspileContext cx, s:ConstructorTypeDesc t
     else if td is s:ArrayTypeDesc {
         return arrayTypeDescToCDuce(cx, td);
     }
+    else if td is s:MappingTypeDesc {
+        return mappingTypeDescToCDuce(cx, td);
+    }
     panic error(td.toString() + "not implemented");
+}
+
+function mappingTypeDescToCDuce(TranspileContext cx, s:MappingTypeDesc td) returns string|error {
+    string[] body = ["{"];
+    // TODO: turn this in to a query expression
+    foreach s:FieldDesc fd in td.fields {
+        body.push(fd.name, "=", (checkpanic typeDescToCDuce(cx, fd.typeDesc))+ ";");
+    }
+    if td.rest is s:INCLUSIVE_RECORD_TYPE_DESC {
+        body.push("..");
+    }
+    else if td.rest !is () {
+        panic error("rest type not implemented");
+    }
+    body.push("}");
+    return " ".'join(...body);
 }
 
 function tupleTypeDescToCDuce(TranspileContext cx, s:TupleTypeDesc td) returns string|error {
