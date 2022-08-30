@@ -1,0 +1,5 @@
+type BInt = Int
+type BError = (`error, Any)
+
+type EL = (`error, { codes = [BInt*]; })
+type E = BError

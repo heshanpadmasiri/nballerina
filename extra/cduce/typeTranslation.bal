@@ -9,7 +9,6 @@ type Range record {|
     int endPos;
 |};
 
-// TODO: turn panics to warnings
 function transpileModulePart(s:ModulePart modulePart, s:SourceFile file) returns string[]|error {
     TranspileContext cx = new(file);
     foreach s:ModuleLevelDefn defn in modulePart.defns {
@@ -60,7 +59,7 @@ class TranspileContext {
                 definition = "(`decimal, (Int, Int))";
             }
             "error" => {
-                definition = "`error";
+                definition = "(`error, Any)";
             }
             "float" => {
                 definition = "Float";
@@ -150,7 +149,17 @@ function constructorTypeDescToCDuce(TranspileContext cx, s:ConstructorTypeDesc t
     else if td is s:MappingTypeDesc {
         return mappingTypeDescToCDuce(cx, td);
     }
-    panic error(td.toString() + "not implemented");
+    else if td is s:ErrorTypeDesc {
+        return errorTypeDescToCDuce(cx, td);
+    }
+    else if td is s:FunctionTypeDesc|s:XmlSequenceTypeDesc|s:TableTypeDesc {
+        panic error(td.toString() + "not implemented");
+    }
+}
+
+function errorTypeDescToCDuce(TranspileContext cx, s:ErrorTypeDesc td) returns string|error {
+    string[] body = ["(", "`error", ", ", check typeDescToCDuce(cx, td.detail), ")"];
+    return "".'join(...body);
 }
 
 function mappingTypeDescToCDuce(TranspileContext cx, s:MappingTypeDesc td) returns string|error {
