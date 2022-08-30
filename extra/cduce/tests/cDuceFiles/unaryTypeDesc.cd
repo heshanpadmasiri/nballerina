@@ -1,0 +1,12 @@
+type BInt = Int
+type BNull = `null
+type BString = String
+type BBoolean = Bool
+type BList = [BTop*]
+type BAny = BNull | BString | BInt | BBoolean | BList
+type BError = (`error, Any)
+type BTop = BAny | BError
+
+type notInt = BTop\BInt
+type newInt = BInt | BNull & BTop\BNull
+type myInt = BInt

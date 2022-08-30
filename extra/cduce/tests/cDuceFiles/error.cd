@@ -1,5 +1,8 @@
 type BInt = Int
+type BNull = `null
 type BError = (`error, Any)
 
 type EL = (`error, { codes = [BInt*]; })
+type ER1 = (`error, { e = ER1 | BNull; })
+type ER2 = (`error, { e = ER2 | BNull; })
 type E = BError

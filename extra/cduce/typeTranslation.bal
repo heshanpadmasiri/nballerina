@@ -40,7 +40,7 @@ class TranspileContext {
         return self.createBaseType(typeName);
     }
 
-    function createBaseType(BaseType typeName) returns TypeRef {
+    private function createBaseType(BaseType typeName) returns TypeRef {
         string name = self.baseTypeName(typeName);
         self.definedTypes[typeName] = name;
         string? definition = ();
@@ -106,7 +106,7 @@ class TranspileContext {
     }
 
 
-    private function createUnion(TypeRef[] refs) returns string {
+    function createUnion(TypeRef[] refs) returns string {
         string seperator = " | ";
         return seperator.'join(...refs);
     }
@@ -131,7 +131,25 @@ function typeDescToCDuce(TranspileContext cx, s:TypeDesc td) returns string|erro
     else if td is s:ConstructorTypeDesc {
         return constructorTypeDescToCDuce(cx, td);
     }
+    else if td is s:UnaryTypeDesc {
+        return unaryTypeDescToCDuce(cx, td);
+    }
     panic error(td.toString() + "not implemented");
+}
+
+function unaryTypeDescToCDuce(TranspileContext cx, s:UnaryTypeDesc td) returns string|error {
+    TypeRef ty = check typeDescToCDuce(cx, td.td);
+    match td.op {
+        "?" => { 
+            TypeRef nullTy = cx.basetypeToCDuce("null");
+            return cx.createUnion([ty, nullTy]);
+        }
+        "!" => {
+            TypeRef top = cx.basetypeToCDuce("top");
+            return top + "\\" + ty;
+        }
+        _ => { return ty; }
+    }
 }
 
 function binaryTypeToCDuce(TranspileContext cx, s:BinaryTypeDesc td) returns string|error {
