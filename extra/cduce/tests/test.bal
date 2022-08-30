@@ -9,8 +9,9 @@ type TranspileTestCase [string, string[]];
     dataProvider: transpileTestCaseProvider
 }
 function testTranspile(string balFilePath, string[] expected) returns error? {
-    s:ModulePart modulePart = check compileBalFile(balFilePath);
-    string[] actual = check transpileModulePart(modulePart);
+    s:SourceFile sourceFile = check createSourceFile(balFilePath);
+    s:ModulePart modulePart = check compileBalFile(sourceFile);
+    string[] actual = check transpileModulePart(modulePart, sourceFile);
     test:assertEquals("\n".'join(...actual), "\n".'join(...expected));
 }
 

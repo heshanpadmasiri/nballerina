@@ -1,17 +1,21 @@
 import wso2/nballerina.front.syntax as s;
+import ballerina/io;
 
 type TypeRef string;
 type BaseType s:BuiltinTypeName|"list"|"top";
 
+type Range record {|
+    int startPos;
+    int endPos;
+|};
+
 // TODO: turn panics to warnings
-function transpileModulePart(s:ModulePart modulePart) returns string[]|error {
-    if modulePart.importDecls.length() != 0 {
-        panic error("imports");
-    }
-    TranspileContext cx = new();
+function transpileModulePart(s:ModulePart modulePart, s:SourceFile file) returns string[]|error {
+    TranspileContext cx = new(file);
     foreach s:ModuleLevelDefn defn in modulePart.defns {
         if defn !is s:TypeDefn {
-            panic error("non-type defns");
+            warning(cx, "module level definitions that are not type definitions will be ignored", { startPos: defn.startPos, endPos: defn.endPos });
+            continue;
         }
         var [name, definition] = check typeDefnToCDuce(cx, defn);
         cx.addTypeDefn(name, definition);
@@ -24,6 +28,11 @@ class TranspileContext {
     private final map<TypeRef> definedTypes = {};
     private final string[] lines = [];
     private final string[] baseTypeDefns = [];
+    s:SourceFile file;
+
+    function init(s:SourceFile file) {
+        self.file = file;	
+    }
 
     function basetypeToCDuce(BaseType typeName) returns TypeRef {
         if self.definedTypes.hasKey(typeName) {
@@ -150,11 +159,12 @@ function mappingTypeDescToCDuce(TranspileContext cx, s:MappingTypeDesc td) retur
     foreach s:FieldDesc fd in td.fields {
         body.push(fd.name, "=", (checkpanic typeDescToCDuce(cx, fd.typeDesc))+ ";");
     }
-    if td.rest is s:INCLUSIVE_RECORD_TYPE_DESC {
+    var rest = td.rest;
+    if rest !is () {
+        if rest !is s:INCLUSIVE_RECORD_TYPE_DESC {
+            warning(cx, "approximating record type open record type", { startPos: rest.startPos, endPos: rest.endPos });
+        }
         body.push("..");
-    }
-    else if td.rest !is () {
-        panic error("rest type not implemented");
     }
     body.push("}");
     return " ".'join(...body);
@@ -201,4 +211,14 @@ function listTypeDescToCDuceInner(TranspileContext cx, s:TypeDesc[] members, s:T
     }
     body.push("]");
     return "".'join(...body);
+}
+
+function warning(TranspileContext cx, string body, Range range) {
+    s:SourceFile file = cx.file;
+    string fileName = file.filename();
+    var [startLine, startColumn] = file.lineColumn(range.startPos);
+    var [endLine, endColumn] = file.lineColumn(range.endPos);
+    (string|int)[] positionBody = ["[",fileName,":", "(", startLine, ":", startColumn, ",", endLine, ":", endColumn, ")","]", " "];
+    string positionPart = "".'join(...from var each in positionBody select each.toString());
+    io:println("WARNING: ", positionPart, body);
 }
