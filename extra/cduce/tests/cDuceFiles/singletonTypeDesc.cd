@@ -1,0 +1,10 @@
+type A = "A"
+type B = "B"
+type C = "AA"
+type I1 = (`int, 10, `pos)
+type I2 = (`int, 15, `pos)
+type I3 = (`int, 10, `neg)
+type I4 = (`int, 10, `pos)
+type F1 = (`float, 4599616371426034975, `pos)
+type F2 = (`float, 4607182418800017408, `pos)
+type F3 = (`float, 4607182418800017408, `neg)

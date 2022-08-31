@@ -9,6 +9,16 @@ type Range record {|
     int endPos;
 |};
 
+type Sign "`pos"|"`neg";
+
+// TODO: do we have negaive and positive zero?
+function valueSign(int|float value) returns Sign {
+    if value is float {
+        return value > 0.0 ? "`pos" :"`neg";
+    }
+    return value > 0 ? "`pos" :"`neg";
+}
+
 function transpileModulePart(s:ModulePart modulePart, s:SourceFile file) returns string[]|error {
     TranspileContext cx = new(file);
     foreach s:ModuleLevelDefn defn in modulePart.defns {
@@ -53,7 +63,8 @@ class TranspileContext {
                 definition = "Bool";
             }
             "byte" => {
-                definition = "0--255";
+                definition = "(`int, 0--255, `pos)";
+
             }
             "decimal" => {
                 definition = "(`decimal, (Int, Int))";
@@ -62,10 +73,10 @@ class TranspileContext {
                 definition = "(`error, Any)";
             }
             "float" => {
-                definition = "Float";
+                definition = "(`float, Int, " + self.createUnion(["`pos", "`neg"]) + ")";
             }
             "int" => {
-                definition = "Int";
+                definition = "(`int, Int, " + self.createUnion(["`pos", "`neg"]) + ")";
             }
             "list" => {
                 definition = string `[${self.basetypeToCDuce("top")}*]`;
@@ -90,7 +101,9 @@ class TranspileContext {
 
     function finalize() returns string[] {
         string[] output = from var line in self.baseTypeDefns select line;
-        output.push("");
+        if output.length() > 0 {
+            output.push("");
+        }
         output.push(...(from var line in self.lines select line));
         return output;
     }
@@ -134,7 +147,68 @@ function typeDescToCDuce(TranspileContext cx, s:TypeDesc td) returns string|erro
     else if td is s:UnaryTypeDesc {
         return unaryTypeDescToCDuce(cx, td);
     }
-    panic error(td.toString() + "not implemented");
+    else {
+        return singletonTypeDescToCDuce(cx, td);
+    }
+}
+
+function singletonTypeDescToCDuce(TranspileContext cx, s:SingletonTypeDesc td) returns string|error {
+    s:ExtendedLiteralExpr value = td.valueExpr;
+    if value is s:LiteralExpr {
+        return literalExprToCDuce(cx, value);
+    } 
+    else if value is s:NumericLiteralExpr {
+        return numericLiteralExprToCDuce(cx, value);
+    }
+    else {
+        return simpleConstNegateExprToCDuce(cx, value);
+    }
+}
+
+// TODO: common codes for float and int in this and numericLiteralExprToCDuce functions
+function simpleConstNegateExprToCDuce(TranspileContext cx, s:SimpleConstNegateExpr expr) returns string|error {
+    var operand = expr.operand;
+    if operand is s:NumericLiteralExpr {
+        return check numericLiteralExprToCDuce(cx, operand, true);
+    }
+    else {
+        panic error("unexpected literal expr");
+    }
+}
+
+function numericLiteralExprToCDuce(TranspileContext cx, s:NumericLiteralExpr expr, boolean negated = false) returns string|error {
+    if expr is s:IntLiteralExpr {
+        // CDuce expect decimal digits
+        int value = expr.base is 10 ? check int:fromString(expr.digits) : check int:fromHexString(expr.digits);
+        Sign sign = negated ? "`neg" : valueSign(value);
+        return "(" + ", ".'join(...["`int", int:abs(value).toString(), sign]) + ")";
+    }
+    else {
+        if expr.typeSuffix is "d" {
+            panic error("Decimal not implemented");
+        }
+        float val = check float:fromString(expr.untypedLiteral);
+        Sign sign = negated ? "`neg" : valueSign(val);
+        return "(" + ", ".'join(...["`float", float:abs(val).toBitsInt().toString(), sign]) + ")";
+    }
+}
+
+function literalExprToCDuce(TranspileContext cx, s:LiteralExpr expr) returns string {
+    var value = expr.value;
+    if value is () {
+        return cx.basetypeToCDuce("null");
+    }
+    else if value is true {
+        return "`true";
+    }
+    else if value is false {
+        return "`false";
+    }
+    else {
+        // TODO: report bug
+        // JBUG cast
+        return "\"" + <string>value + "\"";
+    }
 }
 
 function unaryTypeDescToCDuce(TranspileContext cx, s:UnaryTypeDesc td) returns string|error {

@@ -1,4 +1,4 @@
-type BInt = Int
+type BInt = (`int, Int, `pos | `neg)
 type BString = String
 type BNull = `null
 type BBoolean = Bool

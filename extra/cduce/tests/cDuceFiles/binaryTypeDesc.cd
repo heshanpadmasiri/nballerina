@@ -1,7 +1,7 @@
-type BInt = Int
+type BInt = (`int, Int, `pos | `neg)
 type BString = String
-type BByte = 0--255
-type BFloat = Float
+type BByte = (`int, 0--255, `pos)
+type BFloat = (`float, Int, `pos | `neg)
 
 type T1 = BInt | BString
 type T2 = T1 & BByte
