@@ -7,4 +7,4 @@ type T6 string;
 type T7 ();
 type T8 null;
 type T9 error;
-type T11 decimal;
+type T10 decimal;

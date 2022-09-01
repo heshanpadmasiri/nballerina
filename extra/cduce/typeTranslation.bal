@@ -56,7 +56,7 @@ class TranspileContext {
         string? definition = ();
         match typeName {
             "any" => {
-                BaseType[] members = ["null", "string", "int", "boolean", "list"];
+                BaseType[] members = ["boolean", "decimal", "float", "int", "list", "null", "string"];
                 definition = self.createUnion(from var member in members select self.basetypeToCDuce(member));
             }
             "boolean" => {
