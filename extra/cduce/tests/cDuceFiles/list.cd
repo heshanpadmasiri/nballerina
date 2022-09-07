@@ -1,8 +1,9 @@
-type BInt = (`int, Int, `pos | `neg)
+type BSignedInt = (Int, `pos | `neg)
+type BInt = (`int, BSignedInt)
 type BString = String
 type BBoolean = Bool
-type BDecimal = (`decimal, (Int, Int))
-type BFloat = (`float, Int, `pos | `neg)
+type BDecimal = (`decimal, (BSignedInt, BSignedInt))
+type BFloat = (`float, BSignedInt)
 type BError = (`error, Any)
 type BTop = BAny | BError
 type BList = [BTop*]

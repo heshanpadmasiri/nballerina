@@ -1,22 +1,28 @@
 import wso2/nballerina.front.syntax as s;
+import wso2/nballerina.comm.lib as lib;
 import ballerina/io;
 
 type TypeRef string;
-type BaseType s:BuiltinTypeName|"list"|"top";
+type BaseType s:BuiltinTypeName|"list"|"top"|"signedInt";
 
 type Range record {|
     int startPos;
     int endPos;
 |};
 
-type Sign "`pos"|"`neg";
-
 // TODO: do we have negaive and positive zero?
-function valueSign(int|float value) returns Sign {
-    if value is float {
-        return value > 0.0 ? "`pos" :"`neg";
+function valueToSignedInt(int|float value, boolean negated = false) returns string {
+    string sign;
+    if negated {
+        sign = "`neg";
     }
-    return value > 0 ? "`pos" :"`neg";
+    else if value is float {
+        sign = value > 0.0 ? "`pos" :"`neg";
+    }
+    else {
+        sign = value > 0 ? "`pos" :"`neg";
+    }
+    return string `(${sign}, ${value is int? int:abs(value) : float:abs(value)})`;
 }
 
 function transpileModulePart(s:ModulePart modulePart, s:SourceFile file) returns string[]|error {
@@ -63,20 +69,20 @@ class TranspileContext {
                 definition = "Bool";
             }
             "byte" => {
-                definition = "(`int, 0--255, `pos)";
+                definition = "(`int, (0--255, `pos))";
 
             }
             "decimal" => {
-                definition = "(`decimal, (Int, Int))";
+                definition = "(`decimal, (" + self.basetypeToCDuce("signedInt") + ", " + self.basetypeToCDuce("signedInt") + "))";
             }
             "error" => {
                 definition = "(`error, Any)";
             }
             "float" => {
-                definition = "(`float, Int, " + self.createUnion(["`pos", "`neg"]) + ")";
+                definition = "(`float, " + self.basetypeToCDuce("signedInt") + ")";
             }
             "int" => {
-                definition = "(`int, Int, " + self.createUnion(["`pos", "`neg"]) + ")";
+                definition = "(`int, " + self.basetypeToCDuce("signedInt") + ")";
             }
             "list" => {
                 definition = string `[${self.basetypeToCDuce("top")}*]`;
@@ -90,6 +96,9 @@ class TranspileContext {
             "top" => {
                 BaseType[] members = ["any", "error"];
                 definition = self.createUnion(from var member in members select self.basetypeToCDuce(member));
+            }
+            "signedInt" => {
+                definition = "(Int, `pos | `neg)";
             }
         }
         if definition !is string {
@@ -178,18 +187,21 @@ function simpleConstNegateExprToCDuce(TranspileContext cx, s:SimpleConstNegateEx
 
 function numericLiteralExprToCDuce(TranspileContext cx, s:NumericLiteralExpr expr, boolean negated = false) returns string|error {
     if expr is s:IntLiteralExpr {
-        // CDuce expect decimal digits
+        // CDuce expect decimal digits [0-9]
         int value = expr.base is 10 ? check int:fromString(expr.digits) : check int:fromHexString(expr.digits);
-        Sign sign = negated ? "`neg" : valueSign(value);
-        return "(" + ", ".'join(...["`int", int:abs(value).toString(), sign]) + ")";
+        return "(`int, " + valueToSignedInt(value, negated) + ")";
     }
     else {
         if expr.typeSuffix is "d" {
-            panic error("Decimal not implemented");
+            decimal value = check decimal:fromString(expr.untypedLiteral);
+            if negated {
+                value *= -1d;
+            }
+            int[] bits = lib:toLeDpd(value);
+            return "(`decimal, (" + valueToSignedInt(bits[0]) + ", " + valueToSignedInt(bits[1]) + "))";
         }
-        float val = check float:fromString(expr.untypedLiteral);
-        Sign sign = negated ? "`neg" : valueSign(val);
-        return "(" + ", ".'join(...["`float", float:abs(val).toBitsInt().toString(), sign]) + ")";
+        float value = check float:fromString(expr.untypedLiteral);
+        return "(`float, " + valueToSignedInt(value, negated) + ")";
     }
 }
 

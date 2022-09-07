@@ -1,14 +1,15 @@
 type BBoolean = Bool
-type BDecimal = (`decimal, (Int, Int))
-type BFloat = (`float, Int, `pos | `neg)
-type BInt = (`int, Int, `pos | `neg)
+type BSignedInt = (Int, `pos | `neg)
+type BDecimal = (`decimal, (BSignedInt, BSignedInt))
+type BFloat = (`float, BSignedInt)
+type BInt = (`int, BSignedInt)
 type BError = (`error, Any)
 type BTop = BAny | BError
 type BList = [BTop*]
 type BNull = `null
 type BString = String
 type BAny = BBoolean | BDecimal | BFloat | BInt | BList | BNull | BString
-type BByte = (`int, 0--255, `pos)
+type BByte = (`int, (0--255, `pos))
 
 type T1 = BAny
 type T2 = BBoolean

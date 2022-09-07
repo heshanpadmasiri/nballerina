@@ -1,4 +1,5 @@
-type BInt = (`int, Int, `pos | `neg)
+type BSignedInt = (Int, `pos | `neg)
+type BInt = (`int, BSignedInt)
 type BNull = `null
 type BError = (`error, Any)
 
