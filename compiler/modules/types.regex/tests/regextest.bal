@@ -28,7 +28,9 @@ function testRegexString(f:SubtypeTestOp op, string str, string regex) {
     dataProvider: readInclusionTests
 }
 function testRegexInclusion(f:SubtypeTestOp op, string lhs, string rhs) {
+    io:println(lhs, ",", rhs);
     test:assertEquals(typeRelation(lhs, rhs), op);
+    io:println("done", lhs, ",", rhs);
 }
 
 function readRegexStringTests() returns map<TestCase>|error => readTestCases("modules/types.regex/tests/data/regexStringTests.json");

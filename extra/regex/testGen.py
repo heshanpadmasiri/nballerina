@@ -4,6 +4,7 @@ import string
 
 random.seed(0);
 MAX_CHUNK_LEN = 10;
+MIN_CHUNK_LEN = 3;
 
 def main(nSets, nTests, outputFile=None):
     output = ["["];
@@ -46,8 +47,8 @@ def testGenerator1(count):
     insertRange = (0, len(currentRegex)-1)
     while len(chunks) > 0:
         insertPoint = random.randint(*insertRange)
-        randomStringLen = random.randint(1, MAX_CHUNK_LEN)
-        insertRange = (insertPoint+1 , insertPoint + randomStringLen)
+        randomStringLen = random.randint(MIN_CHUNK_LEN, MAX_CHUNK_LEN)
+        insertRange = (insertPoint+1 , insertPoint + randomStringLen-2)
         newRegex = currentRegex[:insertPoint] + f'({chunks.pop()})*' +currentRegex[insertPoint:]
         results.append(newRegex)
         currentRegex = newRegex

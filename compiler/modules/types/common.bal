@@ -1,3 +1,4 @@
+import ballerina/io;
 // Code common to implementation of multiple basic types
 
 public type Definition object {
@@ -47,6 +48,7 @@ function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredic
     else {
         m = { bdd: b };
         memoTable.add(m);
+        io:println("memo table size:", memoTable.length());
     }
     m.empty = "provisional";
     int initStackDepth = cx.memoStack.length();
