@@ -572,11 +572,57 @@ function listSubtypeIntersect(Context cx, SubtypeData t1, SubtypeData t2) return
 }
 
 function listSubtypeDiff(Context cx, SubtypeData t1, SubtypeData t2) returns SubtypeData {
+    MemoBddCache cache = new (cx.listMemo);
+    if listIsEmptySimple(cx, bddIntersect(cache, <Bdd> t1, <Bdd> t2)) is true {
+        return t1;
+    }
     Bdd b = memoSubtypeDiff(cx.listMemo, <Bdd>t1, <Bdd>t2);
     if b != false && cx.listMemo[b] == () {
         //io:println("fresh BDD: ", bddToString(b));
     }
     return b;
+}
+
+function listIsEmptySimple(Context cx, Bdd bdd) returns boolean? {
+    BddMemo? m = cx.listMemo[bdd];
+    if m !is () && m.empty is boolean {
+        return <boolean>m.empty;
+    }
+    boolean empty = bddEvery(cx, bdd, (), (), listFormulaIsDefinitelyEmpty);
+    if empty == true {
+        cx.listMemo.put({ bdd, empty }); // handle both memoized values being () and not in memo
+        return true;
+    }
+    return ();
+}
+
+function listFormulaIsDefinitelyEmpty(Context cx, Conjunction? pos, Conjunction? neg) returns boolean {
+    if neg !is () || pos is () {
+        return false;
+    }
+    var { members, rest } = cx.listAtomType(pos.atom);
+    Conjunction? current = pos.next;
+    while current !is () {
+        var { members: currentMembers, rest: currentRest } = cx.listAtomType(current.atom);
+        var intersection = listIntersectWith(cx, members, rest, currentMembers, currentRest); 
+        if intersection is () {
+            return false;
+        }
+        if fixedArrayDefinitelyEmpty(intersection[0]) == true {
+            return true;
+        }
+        current = current.next;
+    }
+    return false;
+}
+
+function fixedArrayDefinitelyEmpty(FixedLengthArray array) returns true? {
+    foreach int i in 0 ..< array.fixedLength {
+        if isNever(fixedArrayGet(array, i)) {
+            return true;
+        }
+    }
+    return ();
 }
 
 final BasicTypeOps listOps = {
