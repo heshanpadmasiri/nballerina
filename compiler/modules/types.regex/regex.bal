@@ -267,15 +267,18 @@ function nextPattern(string regex, int index, int end) returns RegexPattern {
         else if op == "|" {
             int nextIndex = endIndex;
             PatternRange[] operands = [lhs];
+            if nextIndex >= end {
+                panic error("expected character after '|'");
+            }
             while nextIndex < end && regex[nextIndex] == "|" {
+                if nextIndex + 1 >= end {
+                    panic error("expected character after '|'");
+                }
                 var [operand, operandWrapped] = readPattern(regex, nextIndex + 1, end);
                 operands.push(operand);
                 nextIndex = operandWrapped ? (operand.endIndex + 2) : (operand.endIndex + 1);
                 nextIndex = skipTillEnd(regex, nextIndex);
             }
-            // var [rhs, rhsWrapped] = readPattern(regex, endIndex + 1, end);
-            // int nextIndex = rhsWrapped ? (rhs.endIndex + 2) : (rhs.endIndex + 1);
-            // nextIndex = skipTillEnd(regex, nextIndex);
             return { operands, nextIndex };
         }
     }
