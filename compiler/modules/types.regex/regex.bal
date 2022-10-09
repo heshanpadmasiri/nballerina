@@ -208,7 +208,7 @@ function starToIntermediateType(RegexContext cx, string regex, Star pattern, int
 function starToIntermediateTypeInner(RegexContext cx, string regex, int index, int startIndex, int endIndex, IntermediateTypeReference recTy) returns IntermediateType {
     RegexPattern pattern = nextPattern(regex, index, endIndex + 1);
     if pattern is End {
-        panic error("unexpected end of pattern");
+        panic error("unexpected end of pattern, possibly unmatched paranthesis");
     }
     // nested star ((a*)*) considered equal to their unnested version (a*) aviod invalid type loop
     if pattern is Star && isNestedStarPattern(regex, startIndex, endIndex, pattern) {
@@ -253,7 +253,7 @@ function nextPattern(string regex, int index, int end) returns RegexPattern {
         return "end";
     }
     if regex[index] is ")"|"*"|"|" {
-        panic error("unexpected start position " + index.toString());
+        panic error("unexpected token at " + index.toString() + " consider wrapping operands with `()`");
     }
     var [lhs, lhsWrapped] = readPattern(regex, index, end);
     int endIndex = lhsWrapped ? (lhs.endIndex + 2) : (lhs.endIndex + 1);
