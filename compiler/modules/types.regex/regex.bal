@@ -13,8 +13,7 @@ type Star record {|
 |};
 
 type Or record {|
-    PatternRange lhs;
-    PatternRange rhs;
+    PatternRange[] operands;
     int nextIndex; // starting position of the next pattern
 |};
 
@@ -244,10 +243,8 @@ function isNestedStarPattern(string regex, int startIndex, int endIndex, Star in
 
 function orToIntermediateType(RegexContext cx, string regex, Or pattern, int end, IntermediateType restTy) returns IntermediateType {
     IntermediateType rest = regexToIntermediateType(cx, regex, pattern.nextIndex, end, restTy);
-    IntermediateType lhs = regexToIntermediateType(cx, regex, pattern.lhs.startIndex, pattern.lhs.endIndex, rest);
-    IntermediateType rhs = regexToIntermediateType(cx, regex, pattern.rhs.startIndex, pattern.rhs.endIndex, rest);
     IntermediateUnionType ty = cx.unionType();
-    ty.operands = [lhs, rhs];
+    ty.operands = from var operand in pattern.operands select regexToIntermediateType(cx, regex, operand.startIndex, operand.endIndex, rest);
     return ty;
 }
 
@@ -266,11 +263,20 @@ function nextPattern(string regex, int index, int end) returns RegexPattern {
             int nextIndex = skipTillEnd(regex, endIndex + 1);
             return { range: lhs, nextIndex };
         }
+        // we have or
         else if op == "|" {
-            var [rhs, rhsWrapped] = readPattern(regex, endIndex + 1, end);
-            int nextIndex = rhsWrapped ? (rhs.endIndex + 2) : (rhs.endIndex + 1);
-            nextIndex = skipTillEnd(regex, nextIndex);
-            return { lhs, rhs, nextIndex };
+            int nextIndex = endIndex;
+            PatternRange[] operands = [lhs];
+            while nextIndex < end && regex[nextIndex] == "|" {
+                var [operand, operandWrapped] = readPattern(regex, nextIndex + 1, end);
+                operands.push(operand);
+                nextIndex = operandWrapped ? (operand.endIndex + 2) : (operand.endIndex + 1);
+                nextIndex = skipTillEnd(regex, nextIndex);
+            }
+            // var [rhs, rhsWrapped] = readPattern(regex, endIndex + 1, end);
+            // int nextIndex = rhsWrapped ? (rhs.endIndex + 2) : (rhs.endIndex + 1);
+            // nextIndex = skipTillEnd(regex, nextIndex);
+            return { operands, nextIndex };
         }
     }
     return "concat";
@@ -305,7 +311,7 @@ function readPattern(string regex, int index, int end) returns [PatternRange, bo
 
 function skipTillEnd(string regex, int currentIndex) returns int {
     int nextIndex = currentIndex;
-    while nextIndex < regex.length() && regex[nextIndex] is ")"|"|"|"*" {
+    while nextIndex < regex.length() && regex[nextIndex] is ")"|"*" {
         nextIndex += 1;
     }
     return nextIndex;
