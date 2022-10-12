@@ -734,27 +734,7 @@ function maybeRoDiff(SemType t1, SemType t2, Context? cx, boolean roDiff) return
     BasicSubtype[] subtypes = [];
     foreach var [code, data1, data2] in new SubtypePairIteratorImpl(t1, t2, some) {
         SubtypeData data;
-        if !roDiff || code < BT_COUNT_INHERENTLY_IMMUTABLE {
-            // normal diff or read-only basic type
-            if data1 == () {
-                var complement = ops[code].complement;
-                data = complement(<SubtypeData>data2);
-            }
-            else if data2 == () {
-                data = data1;
-            }
-            else {
-                var cxDiff = ops[code].contextDiff;
-                if cxDiff == () || cx == () {
-                    var diff = ops[code].diff;
-                    data = diff(data1, data2);
-                }
-                else {
-                    data = cxDiff(cx, data1, data2);
-                }
-            }
-        }
-        else {
+        if cx != () && (code == BT_LIST || code == BT_TABLE) {
             // read-only diff for mutable basic type
             if data1 == () {
                 // data1 was all
@@ -775,18 +755,18 @@ function maybeRoDiff(SemType t1, SemType t2, Context? cx, boolean roDiff) return
                 }
             }
         } else {
-            // normal diff or read-only basic type
-            if data1 == () {
-                var complement = ops[code].complement;
-                data = complement(<SubtypeData>data2);
-            }
-            else if data2 == () {
-                data = data1;
-            }
-            else {
-                var diff = ops[code].diff;
-                data = diff(data1, data2);
-            }
+             // normal diff or read-only basic type
+             if data1 == () {
+                 var complement = ops[code].complement;
+                 data = complement(<SubtypeData>data2);
+             }
+             else if data2 == () {
+                 data = data1;
+             }
+             else {
+                 var diff = ops[code].diff;
+                 data = diff(data1, data2);
+             }
         }
         // JBUG `data` is not narrowed properly if you swap the order by doing `if data == true {} else if data != false {}`
         if data !is boolean {
