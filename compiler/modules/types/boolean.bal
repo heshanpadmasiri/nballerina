@@ -6,7 +6,7 @@ public type BooleanSubtype readonly & record {|
 
 public function booleanConst(boolean value) returns ComplexSemType {
     BooleanSubtype t = { value };
-    return uniformSubtype(UT_BOOLEAN, t);
+    return basicSubtype(BT_BOOLEAN, t);
 }
 
 function booleanSubtypeSingleValue(SubtypeData d) returns boolean? {
@@ -25,31 +25,31 @@ function booleanSubtypeContains(SubtypeData d, boolean b) returns boolean {
     return r.value == b;
 }
 
-function booleanSubtypeUnion(SubtypeData d1, SubtypeData d2) returns SubtypeData {
+function booleanSubtypeUnion(ProperSubtypeData d1, ProperSubtypeData d2) returns SubtypeData {
     BooleanSubtype v1 = <BooleanSubtype>d1;
     BooleanSubtype v2 = <BooleanSubtype>d2;
     return v1.value == v2.value ? v1 : true;
 }
 
-function booleanSubtypeIntersect(SubtypeData d1, SubtypeData d2) returns SubtypeData {
+function booleanSubtypeIntersect(ProperSubtypeData d1, ProperSubtypeData d2) returns SubtypeData {
     BooleanSubtype v1 = <BooleanSubtype>d1;
     BooleanSubtype v2 = <BooleanSubtype>d2;
     return v1.value == v2.value ? v1 : false;
 }
 
-function booleanSubtypeDiff(SubtypeData d1, SubtypeData d2) returns SubtypeData {
+function booleanSubtypeDiff(ProperSubtypeData d1, ProperSubtypeData d2) returns SubtypeData {
     BooleanSubtype v1 = <BooleanSubtype>d1;
     BooleanSubtype v2 = <BooleanSubtype>d2;
     return v1.value == v2.value ? false : v1;
 }
 
-function booleanSubtypeComplement(SubtypeData d) returns SubtypeData {
+function booleanSubtypeComplement(ProperSubtypeData d) returns ProperSubtypeData {
     BooleanSubtype v = <BooleanSubtype>d;
     BooleanSubtype t = { value: !v.value };
     return t;
 }
 
-final UniformTypeOps booleanOps = {
+final BasicTypeOps booleanOps = {
     union: booleanSubtypeUnion,
     intersect: booleanSubtypeIntersect,
     diff: booleanSubtypeDiff,

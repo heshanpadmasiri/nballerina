@@ -1,7 +1,5 @@
 // Implementation specific to basic type function.
 
-import ballerina/io;
-
 // Function subtype is [args, ret]
 // Represents args as tuple type
 public type FunctionAtomicType readonly & SemType[2];
@@ -13,7 +11,7 @@ public class FunctionDefinition {
    
     public function init(Env env) {
         self.atom = env.recFunctionAtom();
-        self.semType = uniformSubtype(UT_FUNCTION, bddAtom(self.atom));
+        self.semType = basicSubtype(BT_FUNCTION, bddAtom(self.atom));
     }
 
     public function getSemType(Env env) returns SemType {
@@ -28,35 +26,16 @@ public class FunctionDefinition {
 }
 
 function functionSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
-    return functionSubtypeIsEmptyWitness(cx, t, new(cx));    
+    return memoSubtypeIsEmpty(cx, cx.functionMemo, functionBddIsEmpty, <Bdd>t);
 }
 
 function functionSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
-    Bdd b = <Bdd>t;
-    BddMemo? mm = cx.functionMemo[b];
-    BddMemo m;
-    if mm == () {
-        m = { bdd: b };
-        cx.functionMemo.add(m);
-        // todo: memoize witness
-    }
-    else {
-        m = mm;
-        boolean? res = m.isEmpty;
-        if res == () {
-            // we've got a loop
-            io:println("got a function loop");
-            // XXX is this right???
-            return true;
-        }
-        else {
-            return res;
-        }
-    }
-    boolean isEmpty = bddEvery(cx, b, (), (), functionFormulaIsEmpty, witness);
-    m.isEmpty = isEmpty;
-    m.witness = witness.get();
-    return isEmpty;    
+    // TODO:
+    return functionSubtypeIsEmpty(cx, t);
+}
+
+function functionBddIsEmpty(Context cx, Bdd b) returns boolean {
+    return bddEvery(cx, b, (), (), functionFormulaIsEmpty);
 }
 
 function functionFormulaIsEmpty(Context cx, Conjunction? pos, Conjunction? neg, WitnessCollector? witness) returns boolean {
@@ -96,7 +75,7 @@ function functionUnionParams(Context cx, Conjunction? pos) returns SemType {
 
 function functionIntersectRet(Context cx, Conjunction? pos) returns SemType {
     if pos == () {
-        return TOP;
+        return VAL;
     }
     return intersect(cx.functionAtomType(pos.atom)[1], functionIntersectRet(cx, pos.next));
 }
@@ -113,7 +92,7 @@ function functionTheta(Context cx, SemType t0, SemType t1, Conjunction? pos) ret
     }
 }
 
-UniformTypeOps functionOps =  {  
+BasicTypeOps functionOps =  {  
     union: bddSubtypeUnion,
     intersect: bddSubtypeIntersect,
     diff: bddSubtypeDiff,

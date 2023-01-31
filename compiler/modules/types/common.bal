@@ -4,30 +4,6 @@ public type Definition object {
     public function getSemType(Env env) returns SemType;
 };
 
-function typeListIsReadOnly(SemType[] list) returns boolean {
-    foreach var t in list {
-        if !isReadOnly(t) {
-            return false;
-        }
-    }
-    return true;
-}
-
-function readOnlyTypeList(SemType[] mt) returns readonly & SemType[] {
-    SemType[] types = [];
-    foreach var s in mt {
-        SemType t;
-        if isReadOnly(s) {
-            t = s;
-        }
-        else {
-            t = intersect(s, READONLY);
-        }
-        types.push(t);
-    }
-    return types.cloneReadOnly(); 
-}
-
 type Conjunction record {
     Atom atom;
     Conjunction? next;
@@ -35,6 +11,142 @@ type Conjunction record {
 
 function and(Atom atom, Conjunction? next) returns Conjunction {
     return { atom, next };
+}
+
+type BddIsEmptyPredicate function(Context cx, Bdd b) returns boolean;
+
+// Memoization logic
+// Castagna's paper does not deal with this fully.
+// Although he calls it memoization, it is not, strictly speaking, just memoization,
+// since it is not just an optimization, but required for correct handling of
+// recursive types.
+// The handling of recursive types depends on our types being defined inductively,
+// rather than coinductively. This means that each shape that is a member of the
+// set denoted by the type is finite.
+// There is a tricky problem here with memoizing results that rely on assumptions
+// that subsequently turn out to be false.
+// Memoization/caching is discussed in section 7.1.2 of the Frisch thesis.
+// This follows Frisch's approach of undoing memoizations that turn out to be wrong.
+// (I did not succeed in fully understanding his approach, so I am not
+// completely sure if we are doing the same.)
+function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredicate isEmptyPredicate, Bdd b) returns boolean {
+    BddMemo? mm = memoTable[b];
+    BddMemo m;
+    if mm != () {
+        MemoEmpty res = mm.empty;
+        if res == "cyclic" {
+            // Since we define types inductively we consider these to be empty
+            return true;
+        }
+        if res is boolean {
+            // We know whether b is empty or not for certain
+            return res;
+        }
+        else if res != () {
+            // We've got a loop.
+            mm.empty = "loop";
+            return true;
+        }
+        // nil case is same as not having a memo, so fall through
+        m = mm;
+    }
+    else {
+        m = { bdd: b };
+        memoTable.add(m);
+    }
+    m.empty = "provisional";
+    int initStackDepth = cx.memoStack.length();
+    cx.memoStack.push(m);
+    boolean isEmpty = isEmptyPredicate(cx, b);
+    boolean isLoop = m.empty == "loop";
+    if !isEmpty || initStackDepth == 0 {
+        foreach int i in initStackDepth + 1 ..< cx.memoStack.length() {
+            MemoEmpty memoEmpty = cx.memoStack[i].empty;
+            if memoEmpty is "provisional"|"loop"|"cyclic" {
+                cx.memoStack[i].empty = isEmpty ? isEmpty : ();
+            }
+        }
+        cx.memoStack.setLength(initStackDepth);
+        // The only way that we have found that this can be empty is by going through a loop.
+        // This means that the shapes in the type would all be infinite.
+        // But we define types inductively, which means we only consider finite shapes.
+        m.empty = isLoop && isEmpty ? "cyclic" : isEmpty;
+    }
+    return isEmpty;
+}
+
+function memoSubtypeIsCyclic(Context cx, BddMemoTable memoTable, BddIsEmptyPredicate isEmptyPredicate, Bdd b) returns boolean {
+    // This assume that we have tested (and so memoized) whether the type is empty. 
+    BddMemo mm = memoTable.get(b);
+    return mm.empty == "cyclic";
+}
+
+type BddIsEmptyPredicate function(Context cx, Bdd b) returns boolean;
+
+// Memoization logic
+// Castagna's paper does not deal with this fully.
+// Although he calls it memoization, it is not, strictly speaking, just memoization,
+// since it is not just an optimization, but required for correct handling of
+// recursive types.
+// The handling of recursive types depends on our types being defined inductively,
+// rather than coinductively. This means that each shape that is a member of the
+// set denoted by the type is finite.
+// There is a tricky problem here with memoizing results that rely on assumptions
+// that subsequently turn out to be false.
+// Memoization/caching is discussed in section 7.1.2 of the Frisch thesis.
+// This follows Frisch's approach of undoing memoizations that turn out to be wrong.
+// (I did not succeed in fully understanding his approach, so I am not
+// completely sure if we are doing the same.)
+function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredicate isEmptyPredicate, Bdd b) returns boolean {
+    BddMemo? mm = memoTable[b];
+    BddMemo m;
+    if mm != () {
+        MemoEmpty res = mm.empty;
+        if res == "cyclic" {
+            // Since we define types inductively we consider these to be empty
+            return true;
+        }
+        if res is boolean {
+            // We know whether b is empty or not for certain
+            return res;
+        }
+        else if res != () {
+            // We've got a loop.
+            mm.empty = "loop";
+            return true;
+        }
+        // nil case is same as not having a memo, so fall through
+        m = mm;
+    }
+    else {
+        m = { bdd: b };
+        memoTable.add(m);
+    }
+    m.empty = "provisional";
+    int initStackDepth = cx.memoStack.length();
+    cx.memoStack.push(m);
+    boolean isEmpty = isEmptyPredicate(cx, b);
+    boolean isLoop = m.empty == "loop";
+    if !isEmpty || initStackDepth == 0 {
+        foreach int i in initStackDepth + 1 ..< cx.memoStack.length() {
+            MemoEmpty memoEmpty = cx.memoStack[i].empty;
+            if memoEmpty is "provisional"|"loop"|"cyclic" {
+                cx.memoStack[i].empty = isEmpty ? isEmpty : ();
+            }
+        }
+        cx.memoStack.setLength(initStackDepth);
+        // The only way that we have found that this can be empty is by going through a loop.
+        // This means that the shapes in the type would all be infinite.
+        // But we define types inductively, which means we only consider finite shapes.
+        m.empty = isLoop && isEmpty ? "cyclic" : isEmpty;
+    }
+    return isEmpty;
+}
+
+function memoSubtypeIsCyclic(Context cx, BddMemoTable memoTable, BddIsEmptyPredicate isEmptyPredicate, Bdd b) returns boolean {
+    // This assume that we have tested (and so memoized) whether the type is empty. 
+    BddMemo mm = memoTable.get(b);
+    return mm.empty == "cyclic";
 }
 
 type BddPredicate function(Context cx, Conjunction? pos, Conjunction? neg, WitnessCollector witness) returns boolean;
@@ -65,17 +177,6 @@ function bddEveryPositive(Context cx, Bdd b, Conjunction? pos, Conjunction? neg,
     }
 }
 
-// The goal of this is to ensure that mappingFormulaIsEmpty does
-// not get an empty posList, because it will interpret that
-// as `map<any|error>` rather than `map<readonly>`.
-// Similarly for listFormulaIsEmpty.
-// We want to share BDDs between the RW and RO case so we cannot change how the BDD is interpreted.
-// Instead we transform the BDD to avoid cases that would give the wrong answer.
-// Atom index 0 is LIST_SUBTYPE_RO and MAPPING_SUBTYPE_RO
-function bddFixReadOnly(Bdd b) returns Bdd {
-    return bddPosMaybeEmpty(b) ? bddIntersect(b, bddAtom(0)) : b;
-}
-
 function bddPosMaybeEmpty(Bdd b) returns boolean {
     if b is boolean {
         return b;
@@ -84,7 +185,7 @@ function bddPosMaybeEmpty(Bdd b) returns boolean {
         return bddPosMaybeEmpty(b.middle) || bddPosMaybeEmpty(b.right);
     }
 }
-   
+
 function andIfPositive(Atom atom, Conjunction? next) returns Conjunction? {
     if atom is int && atom < 0 {
         return next;
@@ -92,20 +193,20 @@ function andIfPositive(Atom atom, Conjunction? next) returns Conjunction? {
     return { atom, next };
 }
 
-function bddSubtypeUnion(SubtypeData t1, SubtypeData t2) returns SubtypeData {
-    return bddUnion(<Bdd>t1, <Bdd>t2);
+function bddSubtypeUnion(ProperSubtypeData t1, ProperSubtypeData t2) returns SubtypeData {
+    return bddUnion(<BddNode>t1, <BddNode>t2);
 }
 
-function bddSubtypeIntersect(SubtypeData t1, SubtypeData t2) returns SubtypeData {
-    return bddIntersect(<Bdd>t1, <Bdd>t2);
+function bddSubtypeIntersect(ProperSubtypeData t1, ProperSubtypeData t2) returns SubtypeData {
+    return bddIntersect(<BddNode>t1, <BddNode>t2);
 }
 
-function bddSubtypeDiff(SubtypeData t1, SubtypeData t2) returns SubtypeData {
-    return bddDiff(<Bdd>t1, <Bdd>t2);
+function bddSubtypeDiff(ProperSubtypeData t1, ProperSubtypeData t2) returns SubtypeData {
+    return bddDiff(<BddNode>t1, <BddNode>t2);
 }
 
-function bddSubtypeComplement(SubtypeData t) returns SubtypeData {
-    return bddComplement(<Bdd>t);
+function bddSubtypeComplement(ProperSubtypeData t) returns SubtypeData {
+    return bddNodeComplement(<BddNode>t);
 }
 
 // Represents path from root to leaf (ending with true)
@@ -137,6 +238,10 @@ function bddPaths(Bdd b, BddPath[] paths, BddPath accum) {
 
 // Feels like this should be a lang library function.
 function shallowCopyTypes(SemType[] v) returns SemType[] {
+    return from var x in v select x;
+}
+
+function shallowCopyCellTypes(CellSemType[] v) returns CellSemType[] {
     return from var x in v select x;
 }
 

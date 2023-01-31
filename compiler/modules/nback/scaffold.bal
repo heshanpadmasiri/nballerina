@@ -1,4 +1,5 @@
 import wso2/nballerina.comm.err;
+import wso2/nballerina.comm.lib;
 import wso2/nballerina.comm.diagnostic as d;
 import wso2/nballerina.bir;
 import wso2/nballerina.types as t;
@@ -8,14 +9,14 @@ type BuildError err:Semantic|err:Unimplemented|err:Internal;
 
 const LLVM_INT = "i64";
 const LLVM_BYTE = "i8";
-const LLVM_DOUBLE = "double";
+const LLVM_FLOAT = "double";
 const LLVM_BOOLEAN = "i1";
 const LLVM_VOID = "void";
 
 final llvm:PointerType LLVM_TAGGED_PTR = heapPointerType("i8");
 final llvm:PointerType LLVM_NIL_TYPE = LLVM_TAGGED_PTR;
 final llvm:PointerType LLVM_TAGGED_PTR_WITHOUT_ADDR_SPACE = llvm:pointerType("i8");
-final llvm:PointerType LLVM_DECIMAL_CONST = llvm:pointerType("i8");
+final llvm:PointerType LLVM_DECIMAL_CONST = llvm:pointerType("i64");
 
 // A Repr is way of representing values.
 // It's a mapping from a SemType to an LLVM type.
@@ -60,7 +61,7 @@ type IntRepr readonly & record {|
 type FloatRepr readonly & record {|
     *ReprFields;
     BASE_REPR_FLOAT base = BASE_REPR_FLOAT;
-    LLVM_DOUBLE llvm = LLVM_DOUBLE;
+    LLVM_FLOAT llvm = LLVM_FLOAT;
     true alwaysImmediate = true;
 |};
 
@@ -71,7 +72,7 @@ type TaggedRepr readonly & record {|
     llvm:IntegralType llvm = LLVM_TAGGED_PTR;
     boolean alwaysImmediate;
 
-    t:UniformTypeBitSet subtype;
+    t:BasicTypeBitSet subtype;
 |};
 
 type Repr BooleanRepr|IntRepr|FloatRepr|TaggedRepr;
@@ -128,6 +129,7 @@ type UsedSemType record {|
 |};
 
 class Scaffold {
+    *Context;
     private final Module mod;
     private final bir:File file;
     private final llvm:FunctionDefn llFunc;
@@ -145,6 +147,7 @@ class Scaffold {
     private final int nParams;
     private DIScaffold? diScaffold;
     final t:SemType returnType;
+    private final BlockNarrowRegBuilder[] narrowRegBuilders = [];
 
     function init(Module mod, llvm:FunctionDefn llFunc, DISubprogram? diFunc, llvm:Builder builder, bir:FunctionDefn defn, bir:FunctionCode code) {
         self.mod = mod;
@@ -168,6 +171,7 @@ class Scaffold {
         llvm:BasicBlock entry = llFunc.appendBasicBlock();
 
         self.blocks = from var b in code.blocks select llFunc.appendBasicBlock(b.name);
+        self.narrowRegBuilders.setLength(code.blocks.length());
 
         builder.positionAtEnd(entry);
         self.addresses = [];
@@ -187,6 +191,8 @@ class Scaffold {
             declareVariables(self, <DIScaffold>diScaffold, entry, code.registers);
         }
     }
+
+    function llContext() returns llvm:Context => self.mod.llContext;
 
     function saveParams(llvm:Builder builder) {
          foreach int i in 0 ..< self.nParams {
@@ -250,7 +256,7 @@ class Scaffold {
         if curDefn != () {
             return curDefn;
         }
-        DecimalDefn newDefn = addDecimalDefn(self.mod.llContext, self.mod.llMod, self.mod.decimalDefns.length(), str);
+        DecimalDefn newDefn = addDecimalDefn(self.mod.llContext, self.mod.llMod, self.mod.decimalDefns.length(), val);
         self.mod.decimalDefns[str] = newDefn;
         return newDefn;
     }
@@ -372,6 +378,34 @@ class Scaffold {
             return used;
         }
     }
+
+    function narrowRegBuilder(bir:Label label) returns BlockNarrowRegBuilder {
+        return self.narrowRegBuilders[label];
+    }
+
+    function scheduleBlockNarrowReg(bir:Label label, bir:NarrowRegister reg) {
+        self.narrowRegBuilders[label].schedule(reg);
+    }
+}
+
+class BlockNarrowRegBuilder {
+    private final table<bir:NarrowRegister> key(number) regs = table[];
+
+    function schedule(bir:NarrowRegister reg) {
+        self.regs.add(reg);
+    }
+
+    function markMerged(bir:Register[] regs) {
+        foreach var reg in regs {
+            _ = self.regs.removeIfHasKey(reg.number);
+        }
+    }
+
+    function finish(llvm:Builder builder, Scaffold scaffold) returns BuildError? {
+        foreach var reg in self.regs {
+            check buildNarrowReg(builder, scaffold, reg);
+        }
+    }
 }
 
 function addRuntimeFunctionDecl(llvm:Module mod, RuntimeFunction rf) returns llvm:FunctionDecl {
@@ -396,7 +430,7 @@ function addStringDefn(llvm:Context context, llvm:Module mod, int defnIndex, str
             encoded |= (i < nBytes ? bytes[i] : 0xFF) << i*8;
         }
         encoded |= FLAG_IMMEDIATE|TAG_STRING;
-        return context.constGetElementPtr(llvm:constNull(LLVM_TAGGED_PTR), [llvm:constInt(LLVM_INT, encoded)]);
+        return context.constGetElementPtr(context.constNull(LLVM_TAGGED_PTR), [context.constInt(LLVM_INT, encoded)]);
     }
     // if nBytes == nCodePoints && nBytes <= 0xFF {
     //     // We want the total size including the header to be a multiple of 8
@@ -407,13 +441,13 @@ function addStringDefn(llvm:Context context, llvm:Module mod, int defnIndex, str
     // }
     else if nBytes <= 0xFFFF {
         int nBytesPadded = padBytes(bytes, 4);
-        val = context.constStruct([llvm:constInt("i16", nBytes), llvm:constInt("i16", nCodePoints), context.constString(bytes)]);
+        val = context.constStruct([context.constInt("i16", nBytes), context.constInt("i16", nCodePoints), context.constString(bytes)]);
         ty = llvm:structType(["i16", "i16", llvm:arrayType("i8", nBytesPadded)]);
         variant = STRING_VARIANT_MEDIUM;
     }
     else {
         int nBytesPadded = padBytes(bytes, 16);
-        val = context.constStruct([llvm:constInt("i64", nBytes), llvm:constInt("i64", nCodePoints), context.constString(bytes)]);
+        val = context.constStruct([context.constInt("i64", nBytes), context.constInt("i64", nCodePoints), context.constString(bytes)]);
         ty = llvm:structType(["i64", "i64", llvm:arrayType("i8", nBytesPadded)]);
         variant = STRING_VARIANT_LARGE;
     }
@@ -425,17 +459,16 @@ function addStringDefn(llvm:Context context, llvm:Module mod, int defnIndex, str
                                                unnamedAddr = true,
                                                linkage = "internal");
     return context.constGetElementPtr(context.constAddrSpaceCast(context.constBitCast(ptr, LLVM_TAGGED_PTR_WITHOUT_ADDR_SPACE), LLVM_TAGGED_PTR),
-                                      [llvm:constInt(LLVM_INT, TAG_STRING | <int>variant)]);
+                                      [context.constInt(LLVM_INT, TAG_STRING | <int>variant)]);
 }
 
-function addDecimalDefn(llvm:Context context, llvm:Module mod, int defnIndex, string str) returns llvm:ConstPointerValue {
-    byte[] bytes = str.toBytes();
-    bytes.push(0);
-    llvm:ConstValue val = context.constString(bytes);
-    llvm:Type ty = llvm:arrayType("i8", bytes.length());
-    llvm:ConstPointerValue ptr = mod.addGlobal(ty,
+function addDecimalDefn(llvm:Context context, llvm:Module mod, int defnIndex, decimal val) returns llvm:ConstPointerValue {
+    var [leastSignificantVal, mostSignificantVal] = lib:toLeDpd(val);
+    llvm:ConstValue lestSignificant = context.constInt("i64", leastSignificantVal);
+    llvm:ConstValue mostSignificant = context.constInt("i64", mostSignificantVal);
+    llvm:ConstPointerValue ptr = mod.addGlobal(llvm:arrayType("i64", 2),
                                                decimalDefnSymbol(defnIndex),
-                                               initializer = val,
+                                               initializer = context.constArray("i64", [lestSignificant, mostSignificant]),
                                                align = 8,
                                                isConstant = true,
                                                unnamedAddr = true,
@@ -463,19 +496,17 @@ final IntRepr REPR_INT = { alwaysInImmediateRange: false, constraints: () };
 final IntRepr REPR_BYTE = { alwaysInImmediateRange: true, constraints: { min: 0, max: 255, all: true } };
 
 final TaggedRepr REPR_NIL = { subtype: t:NIL, alwaysImmediate: true };
-final TaggedRepr REPR_LIST_RW = { subtype: t:LIST_RW, alwaysImmediate: false };
 final TaggedRepr REPR_LIST = { subtype: t:LIST, alwaysImmediate: false };
-final TaggedRepr REPR_MAPPING_RW = { subtype: t:MAPPING_RW, alwaysImmediate: false };
 final TaggedRepr REPR_MAPPING = { subtype: t:MAPPING, alwaysImmediate: false };
 final TaggedRepr REPR_ERROR = { subtype: t:ERROR, alwaysImmediate: false };
 final TaggedRepr REPR_DECIMAL = { subtype: t:DECIMAL, alwaysImmediate: false };
 
-final TaggedRepr REPR_TOP = { subtype: t:TOP, alwaysImmediate: false };
+final TaggedRepr REPR_TOP = { subtype: t:VAL, alwaysImmediate: false };
 final TaggedRepr REPR_ANY = { subtype: t:ANY, alwaysImmediate: false };
 final VoidRepr REPR_VOID = { base: BASE_REPR_VOID, llvm: LLVM_VOID };
 
 final readonly & record {|
-    t:UniformTypeBitSet domain;
+    t:BasicTypeBitSet domain;
     Repr repr;
 |}[] typeReprs = [
     // These are ordered from most to least specific
@@ -483,13 +514,11 @@ final readonly & record {|
     { domain: t:DECIMAL, repr: REPR_DECIMAL },
     { domain: t:BOOLEAN, repr: REPR_BOOLEAN },
     { domain: t:NIL, repr: REPR_NIL },
-    { domain: t:LIST_RW, repr: REPR_LIST_RW },
     { domain: t:LIST, repr: REPR_LIST },
-    { domain: t:MAPPING_RW, repr: REPR_MAPPING_RW },
     { domain: t:MAPPING, repr: REPR_MAPPING },
     { domain: t:ERROR, repr: REPR_ERROR },
     { domain: t:ANY, repr: REPR_ANY },
-    { domain: t:TOP, repr: REPR_TOP }
+    { domain: t:VAL, repr: REPR_TOP }
 ];
 
 function semTypeRetRepr(t:SemType ty) returns RetRepr {
@@ -501,7 +530,7 @@ function semTypeRetRepr(t:SemType ty) returns RetRepr {
 
 // Return the representation for a SemType.
 function semTypeRepr(t:SemType ty) returns Repr {
-    t:UniformTypeBitSet w = t:widenToUniformTypes(ty);    
+    t:BasicTypeBitSet w = t:widenToBasicTypes(ty);    
     if w == t:INT {
         t:IntSubtypeConstraints? constraints = t:intSubtypeConstraints(ty);
         IntRepr repr = { constraints, alwaysInImmediateRange: isIntConstrainedToImmediate(constraints) };
@@ -517,14 +546,14 @@ function semTypeRepr(t:SemType ty) returns Repr {
     }
     int supported = t:NIL|t:BOOLEAN|t:INT|t:FLOAT|t:DECIMAL|t:STRING|t:LIST|t:MAPPING|t:ERROR;
     int maximized = w | supported;
-    if maximized == t:TOP || maximized == (t:NON_BEHAVIOURAL|t:ERROR) || (w & supported) == w {
+    if maximized == t:VAL || maximized == (t:NON_BEHAVIOURAL|t:ERROR) || (w & supported) == w {
         TaggedRepr repr = { subtype: w, alwaysImmediate: isSemTypeAlwaysImmediate(ty, w) };
         return repr;
     }
     panic error("unimplemented type (" + w.toHexString() + ")");
 }
 
-function isSemTypeAlwaysImmediate(t:SemType ty, t:UniformTypeBitSet widenedTy) returns boolean {
+function isSemTypeAlwaysImmediate(t:SemType ty, t:BasicTypeBitSet widenedTy) returns boolean {
     if (widenedTy & ~(t:NIL|t:BOOLEAN|t:INT|t:STRING)) != 0 {
         return false;
     }

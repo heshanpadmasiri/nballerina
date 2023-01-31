@@ -1,88 +1,54 @@
 // Implementation specific to basic type error.
 
 public function errorDetail(SemType detail) returns SemType {
-    SubtypeData sd = subtypeData(detail, UT_MAPPING_RO);
+    SubtypeData sd = bddIntersect(<Bdd>subtypeData(detail, BT_MAPPING), MAPPING_SUBTYPE_RO);
     if sd is boolean {
         if sd {
             return ERROR;
-         }
+        }
         else {
             // XXX This should be reported as an error
             return NEVER;
         }
     }
-    else {
-        return uniformSubtype(UT_ERROR, sd);
+    if sd == MAPPING_SUBTYPE_RO {
+        return ERROR;
     }
+    return basicSubtype(BT_ERROR, sd);
 }
 
 // distinctId must be >= 0
 public function errorDistinct(int distinctId) returns SemType {
     BddNode bdd = bddAtom(-distinctId - 1);
-    return uniformSubtype(UT_ERROR, bdd);
+    return basicSubtype(BT_ERROR, bdd);
 }
 
-// Similar to mappingSubtypeRoIsEmpty,
-// except that we use bddEveryPositive to ignore the distinct ids
+function errorSubtypeComplement(ProperSubtypeData t) returns SubtypeData {
+    return bddSubtypeDiff(MAPPING_SUBTYPE_RO, t);
+}
+
 function errorSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
-    Bdd b = bddFixReadOnly(<Bdd>t);
-    BddMemo? mm = cx.mappingMemo[b];
-    BddMemo m;
-    if mm == () {
-        m = { bdd: b };
-        cx.mappingMemo.add(m);
-    }
-    else {
-        m = mm;
-        boolean? res = m.isEmpty;
-        if res == () {
-            return true;
-        }
-        else {
-            return res;
-        }
-    }
-    // todo: Need to handle witness handling for this scenario
-    WitnessCollector witness = new(cx);
-    boolean isEmpty = bddEveryPositive(cx, b, (), (), mappingFormulaIsEmpty, witness);
-    m.isEmpty = isEmpty;
-    m.witness = witness.get();
-    return isEmpty;    
+    Bdd b = <Bdd>t;
+    // The goal of this is to ensure that mappingFormulaIsEmpty call in errorBddIsEmpty beneath
+    // does not get an empty posList, because it will interpret that
+    // as `map<any|error>` rather than `readonly & map<readonly>`.
+    b = bddPosMaybeEmpty(b) ? bddIntersect(b, MAPPING_SUBTYPE_RO) : b;
+    return memoSubtypeIsEmpty(cx, cx.mappingMemo, errorBddIsEmpty, b);
 }
 
 function errorSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
-    Bdd b = bddFixReadOnly(<Bdd>t);
-    BddMemo? mm = cx.mappingMemo[b];
-    BddMemo m;
-    if mm == () {
-        m = { bdd: b };
-        cx.mappingMemo.add(m);
-        // todo: memoize witness
-    }
-    else {
-        m = mm;
-        boolean? res = m.isEmpty;
-        if res == () {
-            return true;
-        }
-        else {
-            return res;
-        }
-    }
-    // todo: Need to handle witness handling for this scenario
-    boolean isEmpty = bddEveryPositive(cx, b, (), (), mappingFormulaIsEmpty, witness);
-    m.isEmpty = isEmpty;
-    m.witness = witness.get();
-    return isEmpty;    
+    //TODO:
+    return errorSubtypeIsEmpty(cx, t);
 }
 
-final UniformTypeOps errorOps = {
+function errorBddIsEmpty(Context cx, Bdd b) returns boolean {
+    return bddEveryPositive(cx, b, (), (), mappingFormulaIsEmpty);
+}
+
+final BasicTypeOps errorOps = {
     union: bddSubtypeUnion,
     intersect: bddSubtypeIntersect,
     diff: bddSubtypeDiff,
     complement: bddSubtypeComplement,
-    isEmpty: errorSubtypeIsEmpty,
-    isEmptyWitness: errorSubtypeIsEmptyWitness
+    isEmpty: errorSubtypeIsEmpty
 };
-
-

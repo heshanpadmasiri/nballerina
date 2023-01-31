@@ -29,7 +29,7 @@ public function stringConst(string value) returns ComplexSemType {
         char = { allowed: true, values: [] };
         nonChar = { allowed: true, values: [value] };
     }
-    return uniformSubtype(UT_STRING, { char, nonChar });
+    return basicSubtype(BT_STRING, { char, nonChar });
 }
 
 function stringChar() returns SemType {
@@ -37,7 +37,7 @@ function stringChar() returns SemType {
         char: { allowed: false, values: [] }, 
         nonChar: { allowed: true, values: [] }
     };
-    return uniformSubtype(UT_STRING, st);
+    return basicSubtype(BT_STRING, st);
 }
 
 function stringSubtypeSingleValue(SubtypeData d) returns string? {
@@ -63,10 +63,6 @@ function stringSubtypeContains(SubtypeData d, string s) returns boolean {
         return char.values.indexOf(<string:Char>s) != () ? char.allowed : !char.allowed;
     }
     return nonChar.values.indexOf(s) != () ? nonChar.allowed : !nonChar.allowed;
-}
-
-function stringSubtypeContainedIn(StringSubtype subtype, string[] values) returns boolean {
-    return stringSubtypeListCoverage(subtype, values).isSubtype;
 }
 
 // Describes the relationship between a StringSubtype and a list of strings
@@ -171,10 +167,6 @@ function stringSubtypeIntersect(SubtypeData d1, SubtypeData d2) returns SubtypeD
     );
 }
 
-function stringSubtypeDiff(SubtypeData d1, SubtypeData d2) returns SubtypeData {
-    return stringSubtypeIntersect(d1, stringSubtypeComplement(d2));
-}
-
 function stringSubtypeComplement(SubtypeData d) returns SubtypeData {
     var {char, nonChar} = <StringSubtype>d;
     if char.values.length() == 0 && nonChar.values.length() == 0 {
@@ -213,10 +205,9 @@ function createStringSubtype(CharStringSubtype char, NonCharStringSubtype nonCha
     return { char, nonChar };
 }
 
-final UniformTypeOps stringOps = {
+final BasicTypeOps stringOps = {
     union: stringSubtypeUnion,
     intersect: stringSubtypeIntersect,
-    diff: stringSubtypeDiff,
     complement: stringSubtypeComplement,
     // Empty string sets don't use subtype representation.
     isEmpty: notIsEmpty,

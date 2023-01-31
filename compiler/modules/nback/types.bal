@@ -16,7 +16,6 @@ const LLVM_PANIC_CODE = "i64";
 
 final llvm:StructType llStructureDescType = llvm:structType([LLVM_TID]);
 final llvm:PointerType llStructureDescPtrType = llvm:pointerType(llStructureDescType);
-final llvm:ConstPointerValue llNoFillerDesc = llvm:constNull(llStructureDescPtrType);
 
 // This is an approximation, but close enough since we are only accessing the pointer in C.
 final llvm:StructType llComplexType = llvm:structType([LLVM_BITSET, LLVM_BITSET, llvm:arrayType(llvm:pointerType("i8"), 0)]);
@@ -28,9 +27,9 @@ final readonly & llvm:FunctionType[] llListDescFuncTypes = [
     llvm:functionType(LLVM_INT, [LLVM_TAGGED_PTR, LLVM_INT]),
     llvm:functionType(LLVM_PANIC_CODE, [LLVM_TAGGED_PTR, LLVM_INT, LLVM_INT]),
     llvm:functionType(LLVM_PANIC_CODE, [LLVM_TAGGED_PTR, LLVM_INT, LLVM_INT]),
-    llvm:functionType(LLVM_DOUBLE, [LLVM_TAGGED_PTR, LLVM_INT]),
-    llvm:functionType(LLVM_PANIC_CODE, [LLVM_TAGGED_PTR, LLVM_INT, LLVM_DOUBLE]),
-    llvm:functionType(LLVM_PANIC_CODE, [LLVM_TAGGED_PTR, LLVM_INT, LLVM_DOUBLE])
+    llvm:functionType(LLVM_FLOAT, [LLVM_TAGGED_PTR, LLVM_INT]),
+    llvm:functionType(LLVM_PANIC_CODE, [LLVM_TAGGED_PTR, LLVM_INT, LLVM_FLOAT]),
+    llvm:functionType(LLVM_PANIC_CODE, [LLVM_TAGGED_PTR, LLVM_INT, LLVM_FLOAT])
 ];
 
 type ListReprPrefix "generic"|"int_array"|"byte_array"|"float_array";
@@ -68,6 +67,10 @@ final llvm:Type llListType = llvm:structType([llvm:pointerType(llListDescType), 
                                               LLVM_INT,                                  // int64_t capacity
                                               heapPointerType(llvm:pointerType("i8"))]); // union {TaggedPtr, int64_t, float} *members
 
+type Context object {
+    function llContext() returns llvm:Context;
+};
+
 type TypeHowUsed USED_INHERENT_TYPE|USED_EXACTIFY|USED_TYPE_TEST;
 
 public type TypeUsage readonly & record {|
@@ -78,25 +81,25 @@ public type TypeUsage readonly & record {|
 |};
 
 type InitTypes readonly & record {|
-    llvm:StructType uniformSubtype;
-    llvm:PointerType uniformSubtypePtr;
+    llvm:StructType basicSubtype;
+    llvm:PointerType basicSubtypePtr;
     llvm:FunctionType subtypeContainsFunction;
     llvm:PointerType subtypeContainsFunctionPtr;
 |};
 
-// struct UniformSubtype { bool (*contains)(struct UniformSubtype *, TaggedPtr); }
-// struct UniformSubtype *p;
+// struct BasicSubtype { bool (*contains)(struct BasicSubtype *, TaggedPtr); }
+// struct BasicSubtype *p;
 // (p->contains)(p, taggedPtr);
-// struct FooSubtype { bool (*contains)(struct UniformSubtype *, TaggedPtr); int32_t bitSet; }
-// extern bool _bal_record_subtype_contains(struct UniformSubtype *, TaggedPtr);
+// struct FooSubtype { bool (*contains)(struct BasicSubtype *, TaggedPtr); int32_t bitSet; }
+// extern bool _bal_record_subtype_contains(struct BasicSubtype *, TaggedPtr);
 // struct FooSubtype subtype1 = { _bal_record_subtype_contains, 256 };
 function createInitTypes(llvm:Context cx) returns InitTypes {
-    llvm:StructType uniformSubtype = cx.structCreateNamed("UniformSubtype");
-    llvm:PointerType uniformSubtypePtr = llvm:pointerType(uniformSubtype);
-    llvm:FunctionType subtypeContainsFunction = llvm:functionType(LLVM_BOOLEAN, [uniformSubtypePtr, LLVM_TAGGED_PTR]);
+    llvm:StructType basicSubtype = cx.structCreateNamed("BasicSubtype");
+    llvm:PointerType basicSubtypePtr = llvm:pointerType(basicSubtype);
+    llvm:FunctionType subtypeContainsFunction = llvm:functionType(LLVM_BOOLEAN, [basicSubtypePtr, LLVM_TAGGED_PTR]);
     llvm:PointerType subtypeContainsFunctionPtr = llvm:pointerType(subtypeContainsFunction);
-    cx.structSetBody(uniformSubtype, [subtypeContainsFunctionPtr]);
-    return { uniformSubtype, uniformSubtypePtr, subtypeContainsFunction, subtypeContainsFunctionPtr };
+    cx.structSetBody(basicSubtype, [subtypeContainsFunctionPtr]);
+    return { basicSubtype, basicSubtypePtr, subtypeContainsFunction, subtypeContainsFunctionPtr };
 }
 
 function createLlListDescType(int nMemberTypes = 0) returns llvm:StructType {
@@ -114,7 +117,7 @@ function createLlListDescType(int nMemberTypes = 0) returns llvm:StructType {
 
 function listAtomicTypeToListReprPrefix(t:ListAtomicType? atomic) returns ListReprPrefix {
     if atomic != () && atomic.members.fixedLength == 0 {
-        t:SemType rest = atomic.rest;
+        t:SemType rest = t:cellInner(atomic.rest);
         if rest == t:INT {
             return "int_array";
         }
@@ -144,3 +147,28 @@ function mangleTypeSymbol(bir:ModuleId modId, TypeHowUsed howUsed, int index) re
     result += index.toString();
     return result;    
 }
+
+function constNil(Context cx) returns llvm:ConstPointerValue => cx.llContext().constNull(LLVM_NIL_TYPE);
+
+function constNilTaggedPtr(Context cx) returns llvm:ConstPointerValue => cx.llContext().constNull(LLVM_TAGGED_PTR);
+
+function constBoolean(Context cx, boolean b) returns llvm:ConstValue => cx.llContext().constInt(LLVM_BOOLEAN, b ? 1 : 0);
+
+function constInt(Context cx, int val) returns llvm:ConstValue => cx.llContext().constInt(LLVM_INT, val);
+
+function constIndex(Context cx, int val) returns llvm:ConstValue => cx.llContext().constInt(LLVM_INDEX, val);
+
+function constTid(InitModuleContext cx, int val) returns llvm:ConstValue => cx.llContext().constInt(LLVM_TID, val);
+
+function constBitset(InitModuleContext cx, int val) returns llvm:ConstValue => cx.llContext().constInt(LLVM_BITSET, val);
+
+function constMemberType(Context cx, int val) returns llvm:ConstValue => cx.llContext().constInt(LLVM_MEMBER_TYPE, val);
+
+function constI64(Context cx, int val) returns llvm:ConstValue => cx.llContext().constInt("i64", val);
+
+function constI32(Context cx, int val) returns llvm:ConstValue => cx.llContext().constInt("i32", val);
+
+function constI16(Context cx, int val) returns llvm:ConstValue => cx.llContext().constInt("i16", val);
+
+function constFloat(Context cx, float val) returns llvm:ConstValue => cx.llContext().constFloat(LLVM_FLOAT, val);
+

@@ -26,17 +26,58 @@ type ExprEffect record {|
     Binding? binding = ();
 |};
 
-type Binding record {|
+type DeclBinding record {|
     string name;
-    bir:DeclRegister|bir:NarrowRegister reg;
+    bir:DeclRegister reg;
     boolean isFinal;
     boolean used = false;
-    // When this binding represents a narrowing, this refers to the
-    // original binding that was not narrowed.
-    // In the case of the nested narrowing, this points all the way
-    // back to the original explicit binding, not to the previous narrowing.
-    Binding? unnarrowed = ();
 |};
+
+type NarrowBinding record {|
+    string name;
+    bir:NarrowRegister reg;
+    DeclBinding unnarrowed;
+|};
+
+type AssignmentBinding record {|
+    string name;
+    bir:DeclRegister reg; // same as unnarrowed.reg and invalidates.underlying.underling...
+    DeclBinding unnarrowed;
+    bir:NarrowRegister invalidates;
+    Position pos;
+|};
+
+type OccurrenceBinding NarrowBinding|AssignmentBinding;
+type Binding DeclBinding|NarrowBinding|AssignmentBinding;
+
+type BindingChain record {|
+    Binding head;
+    BindingChain? prev;
+|};
+
+// Linked list of incoming branches to a TypeMerger
+type TypeMergerOrigin record {|
+    TypeMergerOrigin? prev;
+    bir:Label label;
+    BindingChain? bindings;
+|};
+
+// A partially constructed potential TypeMergeInsn
+type TypeMerger record {|
+    TypeMergerOrigin? origins = ();
+    bir:BasicBlock dest;
+|};
+
+type TypeMergerPair record {|
+    TypeMerger? trueMerger = ();
+    TypeMerger? falseMerger = ();
+|};
+
+// At least one TypeMerger is non-nil
+type CondExprEffect TypeMergerPair;
+
+// One and only one TypeMerger is non-nil
+type PrevTypeMergers TypeMergerPair;
 
 type BooleanExprEffect record {|
     *ExprEffect;
@@ -63,13 +104,13 @@ class ExprContext {
     final StmtContext? sc;
     final ModuleSymbols mod;
     final s:ModuleLevelDefn defn;
-    final Environment env;
+    final BindingChain? bindings;
     final s:SourceFile file;
     final bir:FunctionCode code;
 
-    function init(ModuleSymbols mod, s:ModuleLevelDefn defn, bir:FunctionCode code, Environment env, StmtContext? sc) {
+    function init(ModuleSymbols mod, s:ModuleLevelDefn defn, bir:FunctionCode code, BindingChain? bindings, StmtContext? sc) {
         self.mod = mod;
-        self.env = env;
+        self.bindings = bindings;
         self.defn = defn;
         self.file = defn.part.file;
         self.sc = sc;
@@ -128,7 +169,7 @@ class ExprContext {
     }
 
     function lookupLocalVarRef(string varName, Position pos) returns t:SingleValue|Binding|bir:FunctionRef|CodeGenError {
-        return lookupLocalVarRef(self, self.mod, varName, self.env, pos);
+        return lookupLocalVarRef(self, self.mod, varName, self.bindings, pos);
     }
 
     function notInConst(s:Expr expr) returns CodeGenError? {
@@ -137,9 +178,10 @@ class ExprContext {
         }
     }
 
-    function exprContextWithBindings(BindingChain bindings) returns ExprContext {
-        return new(self.mod, self.defn, self.code, { bindings, assignments: self.env.assignments }, self.sc);
+    function exprContext(BindingChain? bindings) returns ExprContext {
+        return new(self.mod, self.defn, self.code, bindings, self.sc);
     }
+
 }
 
 function codeGenExprForBoolean(ExprContext cx, bir:BasicBlock bb, s:Expr expr) returns CodeGenError|BooleanExprEffect {
@@ -375,7 +417,7 @@ function codeGenExprForCond(ExprContext cx, bir:BasicBlock bb, s:Expr expr, Prev
     }
     var [value, flags] = booleanOperandValue(operand);
     if (flags & VALUE_SINGLE_SHAPE) != 0 {
-        return codeGenConstCond(cx, block, cx.env.bindings, value, prevs, expr.startPos);
+        return codeGenConstCond(cx, block, value, prevs, expr.startPos);
     }
     bir:Register result;
     if flags != 0 {
@@ -404,11 +446,11 @@ function codeGenExprForCond(ExprContext cx, bir:BasicBlock bb, s:Expr expr, Prev
     else {
         result = <bir:Register>operand;
     }
-    BindingChain? bindings = cx.env.bindings;
-    var [ifTrue, ifFalse, effect] = createMergers(cx, block.label, bindings, bindings, prevs);
-    bir:CondBranchInsn condBranch = { operand: result, ifTrue, ifFalse, pos: expr.startPos };
+    TypeMerger trueMerger = createMerger(cx, block.label, prevs?.trueMerger);
+    TypeMerger falseMerger = createMerger(cx, block.label, prevs?.falseMerger);
+    bir:CondBranchInsn condBranch = { operand: result, ifTrue: trueMerger.dest.label, ifFalse: falseMerger.dest.label, pos: expr.startPos };
     block.insns.push(condBranch);
-    return effect;
+    return { trueMerger, falseMerger };
 }
 
 function codeGenNilLiftResult(ExprContext cx, ExprEffect nonNilEffect, bir:BasicBlock? ifNilBlock, Position pos) returns ExprEffect {
@@ -502,17 +544,18 @@ type MappingAccessType "."|"["|"fill";
 
 // if accessType is ".", k must be a string
 function codeGenMappingGet(ExprContext cx, bir:BasicBlock block, bir:Register mapping, MappingAccessType accessType, bir:StringOperand k, Position pos) returns CodeGenError|RegExprEffect {
+    t:SemType memberType = t:mappingMemberTypeInner(cx.mod.tc, mapping.semType, k.semType);
     boolean maybeMissing = true;
-    if t:mappingMemberRequired(cx.mod.tc, mapping.semType, k.semType) {
+    if !t:containsUndef(memberType) {
         maybeMissing = false;
     }
     else if accessType == "." {
         string fieldName = (<bir:StringConstOperand>k).value;
         return cx.semanticErr(`field access to ${fieldName}} is invalid because field may not be present`, pos=pos);
     }
-    t:SemType memberType = t:mappingMemberType(cx.mod.tc, mapping.semType, k.semType);
     bir:INSN_MAPPING_FILLING_GET|bir:INSN_MAPPING_GET name = bir:INSN_MAPPING_GET;
     if maybeMissing {
+        memberType = t:diff(memberType, t:UNDEF);
         if accessType == "fill" {
             name = bir:INSN_MAPPING_FILLING_GET;
         }
@@ -537,7 +580,7 @@ function codeGenMemberAccessExpr(ExprContext cx, bir:BasicBlock block1, Position
     if l is bir:Register {
         if t:isSubtypeSimple(l.semType, t:LIST) {
             var { result: r, block: nextBlock } = check codeGenExprForInt(cx, block1, index);
-            t:SemType memberType = t:listMemberType(cx.mod.tc, l.semType, r.semType);
+            t:SemType memberType = t:listMemberTypeInner(cx.mod.tc, l.semType, r.semType);
             if t:isEmpty(cx.mod.tc, memberType) {
                 return cx.semanticErr("index out of range", s:range(index));
             }
@@ -575,7 +618,7 @@ function codeGenNegateExpr(ExprContext cx, bir:BasicBlock nextBlock, Position po
     ArithmeticOperand? arith = arithmeticOperand(operand);
     bir:TmpRegister result;
     bir:Insn insn;
-    if arith is [t:UT_INT, bir:IntOperand] {
+    if arith is [t:BT_INT, bir:IntOperand] {
         bir:IntOperand intOperand = arith[1];
         var [value, flags] = intOperandValue(intOperand);
         if flags != 0 {
@@ -586,7 +629,7 @@ function codeGenNegateExpr(ExprContext cx, bir:BasicBlock nextBlock, Position po
         result = cx.createTmpRegister(t:INT, pos);
         insn = <bir:IntArithmeticBinaryInsn> { op: "-", pos, operands: [singletonIntOperand(cx.mod.tc, 0), intOperand], result };
     }
-    else if arith is [t:UT_FLOAT, bir:FloatOperand] {
+    else if arith is [t:BT_FLOAT, bir:FloatOperand] {
         bir:FloatOperand floatOperand = arith[1];
         var [value, flags] = floatOperandValue(floatOperand);
         t:SemType resultType = t:FLOAT;
@@ -602,7 +645,7 @@ function codeGenNegateExpr(ExprContext cx, bir:BasicBlock nextBlock, Position po
         result = cx.createTmpRegister(resultType, pos);
         insn = <bir:FloatNegateInsn> { operand: <bir:Register>floatOperand, result, pos };
     }
-    else if arith is [t:UT_DECIMAL, bir:DecimalOperand] {
+    else if arith is [t:BT_DECIMAL, bir:DecimalOperand] {
         bir:DecimalOperand decimalOperand = arith[1];
         var [value, flags] = decimalOperandValue(decimalOperand);
         t:SemType resultType = t:DECIMAL;
@@ -783,9 +826,8 @@ function codeGenLogicalBinaryExpr(ExprContext cx, bir:BasicBlock bb, s:BinaryLog
         // When compiling a chain of && or chain of ||, keep growing falseMerger or trueMerger respectively
         [TypeMerger?, TypeMerger?, TypeMerger] [trueMerger, falseMerger, rhsMerger] = isOr ? [lhsTrueMerger, (), lhsFalseMerger] : [(), lhsFalseMerger, lhsTrueMerger];
         // When switching from a chain of && to chain of || or vice versa we may need a type merge insn
-        var { bindings: rhsBindings } = codeGenTypeMergeFromMerger(cx, rhsMerger, pos);
-        ExprContext rhsCx = rhsBindings != () ? check cx.exprContextWithBindings(rhsBindings) : cx;
-        return codeGenExprForCond(rhsCx, rhsMerger.dest, right, { trueMerger, falseMerger });
+        var { block: rhsBlock, bindings: rhsBindings } = codeGenTypeMergeFromMerger(cx, rhsMerger, pos);
+        return codeGenExprForCond(cx.exprContext(rhsBindings), rhsBlock, right, { trueMerger, falseMerger });
     }
 }
 
@@ -793,9 +835,15 @@ function codeGenBitwiseBinaryExpr(ExprContext cx, bir:BasicBlock bb, s:BinaryBit
     var [leftValue, leftFlags] = intOperandValue(lhs);
     var [rightValue, rightFlags] = intOperandValue(rhs);
     ValueFlags resultFlags = leftFlags & rightFlags;
-    t:SemType lt = t:widenUnsigned(lhs.semType);
-    t:SemType rt = t:widenUnsigned(rhs.semType);
-    t:SemType resultType = op == "&" ? t:intersect(lt, rt) : t:union(lt, rt);
+    t:SemType leftWidenedType = t:widenUnsigned(lhs.semType);
+    t:SemType rightWidenedType = t:widenUnsigned(rhs.semType);
+    t:SemType resultType;
+    if op is s:BitwiseShiftOp {
+        resultType = op is ">>"|">>>" && t:isSubtype(cx.mod.tc, leftWidenedType, t:intWidthUnsigned(32)) ? leftWidenedType : t:INT;
+    }
+    else {
+        resultType = op == "&" ? t:intersect(leftWidenedType, rightWidenedType) : t:union(leftWidenedType, rightWidenedType);
+    }
     if resultFlags != 0 {
         int value = bitwiseEval(op, leftValue, rightValue);
         if (resultFlags & VALUE_SINGLE_SHAPE) != 0 {
@@ -816,8 +864,8 @@ function codeGenListConstructor(ExprContext cx, bir:BasicBlock bb, t:SemType? ex
     bir:Operand[] operands = [];
     foreach var [i, member] in expr.members.enumerate() {
         bir:Operand operand;
-        t:SemType requiredType =  t:listAtomicTypeMemberAt(atomicType, i);
-        if t:isNever(requiredType) {
+        t:SemType requiredType =  t:listAtomicTypeMemberAtInner(atomicType, i);
+        if requiredType == t:NEVER {
             return cx.semanticErr("this member is more than what is allowed by type", s:range(member));
         }
         { result: operand, block: nextBlock } = check codeGenExprForType(cx, nextBlock, requiredType, member, "incorrect type for list member");
@@ -831,19 +879,19 @@ function codeGenListConstructor(ExprContext cx, bir:BasicBlock bb, t:SemType? ex
 
 function selectListInherentType(ExprContext cx, t:SemType expectedType, s:ListConstructorExpr expr) returns [t:SemType, t:ListAtomicType]|ResolveTypeError {
     // SUBSET always have contextually expected type for list constructor
-    t:SemType expectedListType = t:intersect(expectedType, t:LIST_RW);
+    t:SemType expectedListType = t:intersect(expectedType, t:LIST);
     t:Context tc = cx.mod.tc;
     if t:isEmpty(tc, expectedListType) {
         // don't think this can happen 
         return cx.semanticErr("list not allowed in this context", s:range(expr));
     }
-    t:ListAtomicType? lat = t:listAtomicTypeRw(tc, expectedListType);
+    t:ListAtomicType? lat = t:listAtomicType(tc, expectedListType);
     if lat != () {
         return [expectedListType, lat];
     }
     int len = expr.members.length();
     t:ListAlternative[] alts =
-        from var alt in t:listAlternativesRw(tc, expectedListType)
+        from var alt in t:listAlternatives(tc, expectedListType)
         where listAlternativeAllowsLength(alt, len)
         select alt;
     if alts.length() == 0 {
@@ -853,7 +901,7 @@ function selectListInherentType(ExprContext cx, t:SemType expectedType, s:ListCo
         return cx.semanticErr("ambiguous inherent type for list constructor", s:range(expr));
     }
     t:SemType semType = alts[0].semType;
-    lat = t:listAtomicTypeRw(tc, semType);
+    lat = t:listAtomicType(tc, semType);
     if lat is () {
         return cx.semanticErr("applicable type for list constructor is not atomic", s:range(expr));
     }
@@ -861,12 +909,16 @@ function selectListInherentType(ExprContext cx, t:SemType expectedType, s:ListCo
 }
 
 function listAlternativeAllowsLength(t:ListAlternative alt, int len) returns boolean {
-    foreach t:ListAtomicType a in alt.pos {
-        int minLength = a.members.fixedLength;
+    t:ListAtomicType? pos = alt.pos;
+    if pos !is () {
+        int minLength = pos.members.fixedLength;
         // This doesn't account for filling. See spec issue #1064
-        if a.rest == t:NEVER ? len != minLength : len < minLength {     
+        if t:cellInner(pos.rest) == t:NEVER ? len != minLength : len < minLength {
             return false;
         }
+    }
+    if alt.neg.length() != 0 {
+        panic error("unexpected negative atom in list alternative");
     }
     return true;
 }
@@ -886,7 +938,7 @@ function codeGenMappingConstructor(ExprContext cx, bir:BasicBlock bb, t:SemType?
         }
         fieldPos[name] = f.startPos;
         if mat.names.indexOf(name) == () {
-            if mat.rest == t:NEVER {
+            if t:cellInner(mat.rest) == t:UNDEF {
                 return cx.semanticErr(`type does not allow field named ${name}`, pos=f.startPos);
             }
             else if f.isIdentifier && mat.names.length() > 0 {
@@ -894,7 +946,7 @@ function codeGenMappingConstructor(ExprContext cx, bir:BasicBlock bb, t:SemType?
             }
         }
         bir:Operand operand;
-        { result: operand, block: nextBlock } = check codeGenExprForType(cx, nextBlock, t:mappingAtomicTypeMemberAt(mat, name), f.value, "incorrect type for list member");
+        { result: operand, block: nextBlock } = check codeGenExprForType(cx, nextBlock, t:mappingAtomicTypeMemberAtInnerVal(mat, name), f.value, "incorrect type for list member");
         operands.push(operand);
         fieldNames.push(name);
     }
@@ -905,19 +957,19 @@ function codeGenMappingConstructor(ExprContext cx, bir:BasicBlock bb, t:SemType?
 }
 
 function selectMappingInherentType(ExprContext cx, t:SemType expectedType, s:MappingConstructorExpr expr) returns [t:SemType, t:MappingAtomicType]|ResolveTypeError {
-    t:SemType expectedMappingType = t:intersect(expectedType, t:MAPPING_RW);
+    t:SemType expectedMappingType = t:intersect(expectedType, t:MAPPING);
     t:Context tc = cx.mod.tc;
     if t:isEmpty(tc, expectedMappingType) {
         // XXX can this happen?
         return cx.semanticErr("mapping not allowed in this context", s:range(expr));
     }
-    t:MappingAtomicType? mat = t:mappingAtomicTypeRw(tc, expectedMappingType);
+    t:MappingAtomicType? mat = t:mappingAtomicType(tc, expectedMappingType);
     if mat != () { // easy case
         return [expectedMappingType, mat]; 
     }
     string[] fieldNames = from var f in expr.fields order by f.name select f.name;
     t:MappingAlternative[] alts =
-        from var alt in t:mappingAlternativesRw(tc, expectedMappingType)
+        from var alt in t:mappingAlternatives(tc, expectedMappingType)
         where mappingAlternativeAllowsFields(alt, fieldNames)
         select alt;
     if alts.length() == 0 {
@@ -927,7 +979,7 @@ function selectMappingInherentType(ExprContext cx, t:SemType expectedType, s:Map
         return cx.semanticErr("ambiguous inherent type for mapping constructor", s:range(expr));
     }
     t:SemType semType = alts[0].semType;
-    mat = t:mappingAtomicTypeRw(tc, semType);
+    mat = t:mappingAtomicType(tc, semType);
     if mat is () {
         return cx.semanticErr("applicable type for mapping constructor is not atomic", s:range(expr));
     }
@@ -935,10 +987,11 @@ function selectMappingInherentType(ExprContext cx, t:SemType expectedType, s:Map
 }
 
 function mappingAlternativeAllowsFields(t:MappingAlternative alt, string[] fieldNames) returns boolean {
-    foreach t:MappingAtomicType a in alt.pos {
+    t:MappingAtomicType? pos = alt.pos;
+    if pos !is () {
         // SUBSET won't be right with record defaults
-        if a.rest == t:NEVER {
-            if a.names != fieldNames {
+        if t:cellInner(pos.rest) == t:UNDEF {
+            if pos.names != fieldNames {
                 return false;
             }
         }
@@ -946,7 +999,7 @@ function mappingAlternativeAllowsFields(t:MappingAlternative alt, string[] field
         // Both a.names and fieldNames are ordered
         int i = 0;
         int len = fieldNames.length();
-        foreach string name in a.names {
+        foreach string name in pos.names {
             while true {
                 if i >= len {
                     return false;
@@ -961,6 +1014,9 @@ function mappingAlternativeAllowsFields(t:MappingAlternative alt, string[] field
                 i += 1;
             }
         }
+    }
+    if alt.neg.length() != 0 {
+        panic error("unexpected negative atom in mapping alternative");
     }
     return true;
 }
@@ -1062,7 +1118,7 @@ function codeGenTypeCast(ExprContext cx, bir:BasicBlock bb, t:SemType? expected,
     t:SemType operandExpectedType = expected == () ? toType : t:intersect(toType, expected);
     var { result: operand, block: nextBlock } = check codeGenExpr(cx, bb, operandExpectedType, tcExpr.operand);
     t:SemType fromType = operandSemType(cx.mod.tc, operand);
-    t:UniformTypeBitSet? toNumType = t:singleNumericType(toType);
+    t:BasicTypeBitSet? toNumType = t:singleNumericType(toType);
     if toNumType != () && !t:isSubtypeSimple(t:intersect(fromType, t:NUMBER), toNumType) {
         toType = t:diff(toType, t:diff(t:NUMBER, toNumType));
         // do numeric conversion now
@@ -1084,7 +1140,7 @@ function codeGenTypeCast(ExprContext cx, bir:BasicBlock bb, t:SemType? expected,
     return { result, block: nextBlock };
 }
 
-function codeGenNumericConvert(ExprContext cx, bir:BasicBlock nextBlock, bir:Operand operand, t:UniformTypeBitSet toNumType, Position pos) returns CodeGenError|ExprEffect {
+function codeGenNumericConvert(ExprContext cx, bir:BasicBlock nextBlock, bir:Operand operand, t:BasicTypeBitSet toNumType, Position pos) returns CodeGenError|ExprEffect {
     t:SemType fromType = operandSemType(cx.mod.tc, operand);
     t:SemType resultType = t:union(t:diff(fromType, t:NUMBER), toNumType);
     var [shape, flags] = operandValue(operand);
@@ -1134,11 +1190,10 @@ function codeGenNumericConvert(ExprContext cx, bir:BasicBlock nextBlock, bir:Ope
 function codeGenTypeTestForCond(ExprContext cx, bir:BasicBlock nextBlock, t:SemType semType, Binding opBinding, boolean negated, Position pos, PrevTypeMergers? prevs) returns CodeGenError|CondExprEffect {
     bir:Register reg = opBinding.reg;
     t:Context tc = cx.mod.tc;
-    BindingChain? bindings = cx.env.bindings;
     t:SemType curSemType = reg.semType;
-    t:SemType diff = t:roDiff(tc, curSemType, semType);
+    t:SemType diff = t:diff(curSemType, semType);
     if t:isEmpty(tc, diff) {
-        return codeGenConstCond(cx, nextBlock, bindings, !negated, prevs, pos);
+        return codeGenConstCond(cx, nextBlock, !negated, prevs, pos);
     }
     t:SemType intersect;
     if t:isSubtype(tc, semType, curSemType) {
@@ -1148,44 +1203,26 @@ function codeGenTypeTestForCond(ExprContext cx, bir:BasicBlock nextBlock, t:SemT
         intersect = t:intersect(curSemType, semType);
     }
     if t:isEmpty(tc, intersect) {
-        return codeGenConstCond(cx, nextBlock, bindings, negated, prevs, pos);
+        return codeGenConstCond(cx, nextBlock, negated, prevs, pos);
     }
     if negated {
         [intersect, diff] = [diff, intersect];
     }
+
     bir:NarrowRegister ifTrueRegister = cx.createNarrowRegister(intersect, reg);
     bir:NarrowRegister ifFalseRegister = cx.createNarrowRegister(diff, reg);
-    BindingChain? trueBinding = narrow(bindings, opBinding, ifTrueRegister);
-    BindingChain? falseBinding = narrow(bindings, opBinding, ifFalseRegister);
-    var [ifTrue, ifFalse, effect] = createMergers(cx, nextBlock.label, trueBinding, falseBinding, prevs);
-    bir:TypeBranchInsn insn = { operand: reg, semType: intersect, ifTrue, ifFalse, ifTrueRegister, ifFalseRegister, pos };
+    TypeMerger trueMerger = createNarrowMerger(cx, opBinding, ifTrueRegister, pos, nextBlock.label, prevs?.trueMerger);
+    TypeMerger falseMerger = createNarrowMerger(cx, opBinding, ifFalseRegister, pos, nextBlock.label, prevs?.falseMerger);
+    bir:TypeBranchInsn insn = { operand: reg, semType: intersect, ifTrue: trueMerger.dest.label, ifFalse: falseMerger.dest.label, ifTrueRegister, ifFalseRegister, pos };
     nextBlock.insns.push(insn);
-    return effect;
+    return { trueMerger, falseMerger };
 }
 
-// Narrow `binding` with `reg` and add it to `bindings` chain.
-function narrow(BindingChain? bindings, Binding binding, bir:NarrowRegister reg) returns BindingChain {
-    return { head: { name: binding.name, reg, isFinal: binding.isFinal, unnarrowed: binding.unnarrowed ?: binding }, prev: bindings };
+function createNarrowMerger(ExprContext cx, Binding binding, bir:NarrowRegister reg, Position pos, bir:Label originLabel, TypeMerger? merger) returns TypeMerger {
+    return createMergerWithBindings(cx, narrow(cx.bindings, binding, reg, pos), originLabel, merger);
 }
 
-function createMergers(ExprContext cx, bir:Label originLabel, BindingChain? trueBindings, BindingChain? falseBindings, PrevTypeMergers? prevs) returns [bir:Label, bir:Label, CondExprEffect] {
-    var [ifTrue, trueMerger] = createMerger(cx, originLabel, trueBindings, prevs?.trueMerger);
-    var [ifFalse, falseMerger] = createMerger(cx, originLabel, falseBindings, prevs?.falseMerger);
-    return [ifTrue, ifFalse, { trueMerger, falseMerger }];
-}
-
-function createMerger(ExprContext cx, bir:Label originLabel, BindingChain? bindings, TypeMerger? shared) returns [bir:Label, TypeMerger] {
-    bir:BasicBlock nextBlock = maybeCreateBasicBlock(cx, shared?.dest);
-    TypeMerger merger = consMerger(nextBlock, originLabel, bindings, shared?.origins);
-    return [nextBlock.label, merger];
-}
-
-function consMerger(bir:BasicBlock mergerBlock, bir:Label originLabel, BindingChain? originBindings, TypeMergeOrigin? prevOrigins) returns TypeMerger {
-    TypeMergeOrigin? origins = originBindings != () ? { bindings: originBindings, label: originLabel, prev: prevOrigins } : prevOrigins;
-    return { dest: mergerBlock, origins };
-}
-
-function codeGenConstCond(ExprContext cx, bir:BasicBlock block, BindingChain? bindings, boolean constCond, PrevTypeMergers? prevs, Position pos) returns CondExprEffect {
+function codeGenConstCond(ExprContext cx, bir:BasicBlock block, boolean constCond, PrevTypeMergers? prevs, Position pos) returns CondExprEffect {
     if prevs == () {
         return constCond ? { trueMerger: { dest: block } } : { falseMerger: { dest: block } };
     }
@@ -1198,12 +1235,15 @@ function codeGenConstCond(ExprContext cx, bir:BasicBlock block, BindingChain? bi
     }
     else {
         // `b && true` or `b || false`. Need two mergers. Only one previously created mergers are available. Other might have been used to evaluate const true/false. Create a new merger.
-        bir:BasicBlock mergeBlock = cx.createBasicBlock();
-        bir:BranchInsn branch = { dest: mergeBlock.label, pos };
+        TypeMerger newMerger = createMerger(cx, block.label, ());
+        bir:BranchInsn branch = { dest: newMerger.dest.label, pos };
         block.insns.push(branch);
-        TypeMerger newMerger = consMerger(mergeBlock, block.label, bindings, ());
         return constCond ? { trueMerger: newMerger, falseMerger: merger } : { trueMerger: merger, falseMerger: newMerger };
     }
+}
+
+function createMerger(ExprContext cx, bir:Label originLabel, TypeMerger? merger) returns TypeMerger {
+    return createMergerWithBindings(cx, cx.bindings, originLabel, merger);
 }
 
 function codeGenTypeTest(ExprContext cx, bir:BasicBlock bb, t:SemType? expected, s:TypeDesc td, s:Expr left, boolean negated, Position pos) returns CodeGenError|ExprEffect {
@@ -1215,7 +1255,7 @@ function codeGenTypeTest(ExprContext cx, bir:BasicBlock bb, t:SemType? expected,
 function finishCodeGenTypeTest(ExprContext cx, t:SemType semType, bir:Operand operand, bir:BasicBlock nextBlock, boolean negated, Position pos) returns CodeGenError|BooleanExprEffect {
     t:Context tc = cx.mod.tc;  
     t:SemType curSemType = operandSemType(tc, operand);
-    t:SemType diff = t:roDiff(tc, curSemType, semType);
+    t:SemType diff = t:diff(curSemType, semType);
     if t:isEmpty(tc, diff) {
         return { result: singletonBooleanOperand(tc, !negated), block: nextBlock };
     }
@@ -1242,13 +1282,13 @@ function codeGenCheckingExpr(ExprContext cx, bir:BasicBlock bb, t:SemType? expec
     var { result: o, block: nextBlock, binding } = check codeGenExpr(cx, bb, expected, expr);
     t:SemType semType = operandSemType(cx.mod.tc, o);
     t:SemType errorType =  t:intersect(semType, t:ERROR);
-    if t:isNever(errorType) {
+    if errorType == t:NEVER {
         return { result: o, block: nextBlock };
     }
     else {
         bir:Register operand = <bir:Register>o;
         t:SemType resultType = t:diff(semType, t:ERROR);
-        if t:isNever(resultType) {
+        if resultType == t:NEVER {
             // This has to be an error, otherwise type of expression would be `never``
             return cx.semanticErr(`operand of ${checkingKeyword} expression is always an error`, pos);
         }
@@ -1348,8 +1388,8 @@ function sufficientArguments(ExprContext cx, bir:FunctionRef func, s:MethodCallE
     }
 }
 
-function codeGenTypeMergeFromMerger(ExprContext cx, TypeMerger merger, Position pos) returns record {| bir:BasicBlock block; BindingChain? bindings; Assignment[0] assignments = []; |} {
-    BindingChain? trueBindings = codeGenTypeMerge(cx, merger.dest, cx.env.bindings, merger.origins, pos);
+function codeGenTypeMergeFromMerger(ExprContext cx, TypeMerger merger, Position pos) returns record {| bir:BasicBlock block; BindingChain? bindings; |} {
+    BindingChain? trueBindings = codeGenTypeMerge(cx, merger.dest, cx.bindings, merger.origins, pos);
     return { block: merger.dest, bindings: trueBindings };
 }
 
@@ -1357,7 +1397,7 @@ function codeGenTypeMergeFromMerger(ExprContext cx, TypeMerger merger, Position 
 type MergeOriginGroup record {|
     // Same as unnarrowed.number
     readonly int number;
-    Binding unnarrowed;
+    DeclBinding unnarrowed;
     t:SemType union;
     bir:Register[] narrowedRegs;
     bir:Label[] origins;
@@ -1365,43 +1405,46 @@ type MergeOriginGroup record {|
 
 type OriginGroupTable table<MergeOriginGroup> key(number);
 
-function codeGenTypeMerge(ExprContext cx, bir:BasicBlock block, BindingChain? bindingLimit, TypeMergeOrigin? origins, Position pos) returns BindingChain? {
+function codeGenTypeMerge(ExprContext cx, bir:BasicBlock block, BindingChain? bindingLimit, TypeMergerOrigin? origins, Position pos) returns BindingChain? {
     if origins == () {
         return bindingLimit;
     }
     if origins.prev == () {
         return origins.bindings;
     }
-    var [numOrigins, originGroups] = groupOriginsByUnnarrowed(bindingLimit?.head, origins);
+    var [numOrigins, originGroups] = groupOriginsByUnnarrowed(bindingLimit, origins);
     BindingChain? narrowed = bindingLimit;
     foreach var originGroup in originGroups {
         if originGroup.origins.length() < numOrigins {
             continue;
         }
         Binding unnarrowed = originGroup.unnarrowed;
-        Binding existing = <Binding>envLookup(unnarrowed.name, cx.env);
+        Binding existing = <Binding>envLookup(unnarrowed.name, bindingLimit);
         if existing.reg.semType == originGroup.union {
             continue;
         }
         bir:NarrowRegister merged = cx.createNarrowRegister(originGroup.union, unnarrowed.reg, pos);
         bir:TypeMergeInsn insn = { result: merged, pos, operands: originGroup.narrowedRegs.cloneReadOnly(), predecessors: originGroup.origins.cloneReadOnly() };
         block.insns.push(insn);
-        narrowed = narrow(narrowed, unnarrowed, merged);
+        narrowed = narrow(narrowed, unnarrowed, merged, pos);
     }
     return narrowed;
 }
 
 // Bindings form each origin, up to the limit, grouped by the underling reg.
-function groupOriginsByUnnarrowed(Binding? bindingLimit, TypeMergeOrigin? origins) returns [int, OriginGroupTable] {
+// If a group has less origins than numOrigins, some path doesn't narrow, and the group can be ignored.
+function groupOriginsByUnnarrowed(BindingChain? bindingLimit, TypeMergerOrigin? origins) returns [int, OriginGroupTable] {
     int numOrigins = 0;
-    TypeMergeOrigin? origin = origins;
-    final table<MergeOriginGroup> key(number) originGroups = table [];
+    TypeMergerOrigin? origin = origins;
+    final OriginGroupTable originGroups = table [];
     while origin != () {
         BindingChain? bindings = origin.bindings;
         boolean[] added = [];
-        while bindings != () && bindings.head !== bindingLimit {
-            var { reg, unnarrowed } = bindings.head;
-            if unnarrowed != () {
+        while bindings !== bindingLimit {
+            var { head, prev } = <BindingChain>bindings;
+            if head is OccurrenceBinding {
+                bir:Register reg = head.reg;
+                var unnarrowed = head.unnarrowed;
                 int number = unnarrowed.reg.number;
                 if number >= added.length() || !added[number] {
                     MergeOriginGroup? originGroup = originGroups[number];
@@ -1417,7 +1460,7 @@ function groupOriginsByUnnarrowed(Binding? bindingLimit, TypeMergeOrigin? origin
                     added[number] = true;
                 }
             }
-            bindings = bindings.prev;
+            bindings = prev;
         }
         numOrigins += 1;
         origin = origin.prev;
@@ -1485,15 +1528,15 @@ function instantiateArrayFunctionSignature(t:Context tc, bir:FunctionSignature s
 }
 
 function arraySupertype(t:Context tc, t:SemType listType) returns [t:SemType, t:SemType] {
-    t:ListAtomicType? atomic = t:listAtomicTypeRw(tc, listType);
+    t:ListAtomicType? atomic = t:listAtomicType(tc, listType);
     if atomic != () && atomic.members.fixedLength == 0 {
         // simple case
-        return [atomic.rest, listType];
+        return [t:cellInner(atomic.rest), listType];
     }
     else {
-        t:SemType memberType = t:listMemberType(tc, listType, t:INT);
+        t:SemType memberType = t:listMemberTypeInner(tc, listType, t:INT);
         t:ListDefinition def = new;
-        return [memberType, def.define(tc.env, rest = memberType)];
+        return [memberType, t:defineListTypeWrapped(def, tc.env, rest = memberType)];
     }
 }
 
@@ -1516,7 +1559,7 @@ function instantiateType(t:SemType ty, t:SemType memberType, t:SemType container
         counter.n += 1;
         return containerType;
     }
-    else if ty == t:TOP {
+    else if ty == t:VAL {
         counter.n += 1;
         return memberType;
     }
@@ -1525,51 +1568,51 @@ function instantiateType(t:SemType ty, t:SemType memberType, t:SemType container
     }
 }
 
-type IntOperandPair readonly & [t:UT_INT, [bir:IntOperand, bir:IntOperand]];
-type FloatOperandPair readonly & [t:UT_FLOAT, [bir:FloatOperand, bir:FloatOperand]];
-type DecimalOperandPair readonly & [t:UT_DECIMAL, [bir:DecimalOperand, bir:DecimalOperand]];
-type StringOperandPair readonly & [t:UT_STRING, [bir:StringOperand, bir:StringOperand]];
+type IntOperandPair readonly & [t:BT_INT, [bir:IntOperand, bir:IntOperand]];
+type FloatOperandPair readonly & [t:BT_FLOAT, [bir:FloatOperand, bir:FloatOperand]];
+type DecimalOperandPair readonly & [t:BT_DECIMAL, [bir:DecimalOperand, bir:DecimalOperand]];
+type StringOperandPair readonly & [t:BT_STRING, [bir:StringOperand, bir:StringOperand]];
 
 type ArithmeticOperandPair IntOperandPair|DecimalOperandPair|FloatOperandPair|StringOperandPair;
 
-type ArithmeticOperand readonly & ([t:UT_STRING, bir:StringOperand]
-                                   |[t:UT_FLOAT, bir:FloatOperand]
-                                   |[t:UT_DECIMAL, bir:DecimalOperand]
-                                   |[t:UT_INT, bir:IntOperand]);
+type ArithmeticOperand readonly & ([t:BT_STRING, bir:StringOperand]
+                                   |[t:BT_FLOAT, bir:FloatOperand]
+                                   |[t:BT_DECIMAL, bir:DecimalOperand]
+                                   |[t:BT_INT, bir:IntOperand]);
 
 function arithmeticOperandPair(bir:Operand lhs, bir:Operand rhs) returns ArithmeticOperandPair? {
     ArithmeticOperand? l = arithmeticOperand(lhs);
     ArithmeticOperand? r = arithmeticOperand(rhs);
-    if l is [t:UT_INT, bir:IntOperand] && r is [t:UT_INT, bir:IntOperand] {
-        return [t:UT_INT, [l[1], r[1]]];
+    if l is [t:BT_INT, bir:IntOperand] && r is [t:BT_INT, bir:IntOperand] {
+        return [t:BT_INT, [l[1], r[1]]];
     }
-    if l is [t:UT_FLOAT, bir:FloatOperand] && r is [t:UT_FLOAT, bir:FloatOperand] {
-        return [t:UT_FLOAT, [l[1], r[1]]];
+    if l is [t:BT_FLOAT, bir:FloatOperand] && r is [t:BT_FLOAT, bir:FloatOperand] {
+        return [t:BT_FLOAT, [l[1], r[1]]];
     }
-    if l is [t:UT_DECIMAL, bir:DecimalOperand] && r is [t:UT_DECIMAL, bir:DecimalOperand] {
-        return [t:UT_DECIMAL, [l[1], r[1]]];
+    if l is [t:BT_DECIMAL, bir:DecimalOperand] && r is [t:BT_DECIMAL, bir:DecimalOperand] {
+        return [t:BT_DECIMAL, [l[1], r[1]]];
     }
-    if l is [t:UT_STRING, bir:StringOperand] && r is [t:UT_STRING, bir:StringOperand] {
-        return [t:UT_STRING, [l[1], r[1]]];
+    if l is [t:BT_STRING, bir:StringOperand] && r is [t:BT_STRING, bir:StringOperand] {
+        return [t:BT_STRING, [l[1], r[1]]];
     }
     return ();
 }
 
 function arithmeticOperand(bir:Operand operand) returns ArithmeticOperand? {
     if operand is bir:Register {
-        t:UniformTypeCode? utc = t:uniformTypeCode(t:widenToUniformTypes(operand.semType));
+        t:BasicTypeCode? btc = t:basicTypeCode(t:widenToBasicTypes(operand.semType));
         // JBUG should be able to do this with a single return
-        if utc == t:UT_INT {
-            return [utc, operand];
+        if btc == t:BT_INT {
+            return [btc, operand];
         }
-        if utc == t:UT_FLOAT {
-            return [utc, operand];
+        if btc == t:BT_FLOAT {
+            return [btc, operand];
         }
-        if utc == t:UT_DECIMAL {
-            return [utc, operand];
+        if btc == t:BT_DECIMAL {
+            return [btc, operand];
         }
-        if utc == t:UT_STRING {
-            return [utc, operand];
+        if btc == t:BT_STRING {
+            return [btc, operand];
         }
         return ();
     }
@@ -1580,16 +1623,16 @@ function arithmeticOperand(bir:Operand operand) returns ArithmeticOperand? {
 
 function arithmeticConstOperand(bir:ConstOperand operand) returns ArithmeticOperand? {
     if operand is bir:StringOperand {
-        return [t:UT_STRING, operand];
+        return [t:BT_STRING, operand];
     }
     else if operand is bir:IntOperand {
-        return [t:UT_INT, operand];
+        return [t:BT_INT, operand];
     }
     else if operand is bir:FloatConstOperand {
-        return [t:UT_FLOAT, operand];
+        return [t:BT_FLOAT, operand];
     }
     else if operand is bir:DecimalConstOperand {
-        return [t:UT_DECIMAL, operand];
+        return [t:BT_DECIMAL, operand];
     }
     else {
         return ();
@@ -1604,14 +1647,14 @@ function operandLangLibModuleName(bir:Operand operand) returns LangLibModuleName
     else if t:isSubtypeSimple(operand.semType, t:MAPPING) {
         return "map";
     }
-    t:UniformTypeCode? utc = t:uniformTypeCode(t:widenToUniformTypes(semType));
-    match utc {
-        t:UT_BOOLEAN => { return "boolean"; }
-        t:UT_INT => { return "int"; }
-        t:UT_FLOAT => { return "float"; }
-        t:UT_DECIMAL => { return "decimal"; }
-        t:UT_STRING => { return "string"; }
-        t:UT_ERROR => { return "error"; }
+    t:BasicTypeCode? btc = t:basicTypeCode(t:widenToBasicTypes(semType));
+    match btc {
+        t:BT_BOOLEAN => { return "boolean"; }
+        t:BT_INT => { return "int"; }
+        t:BT_FLOAT => { return "float"; }
+        t:BT_DECIMAL => { return "decimal"; }
+        t:BT_STRING => { return "string"; }
+        t:BT_ERROR => { return "error"; }
     }
     return ();
 }
@@ -1840,4 +1883,18 @@ function typeMergerPairSingleton(TypeMergerPair pair) returns [boolean, TypeMerg
         panic err:impossible("empty type merger pair");
     }
     return [constCond, merger];
+}
+
+function createMergerWithBindings(ExprContext cx, BindingChain? bindings, bir:Label originLabel, TypeMerger? merger) returns TypeMerger {
+    TypeMergerOrigin origins = { bindings, label: originLabel, prev: merger?.origins };
+    return { dest: maybeCreateBasicBlock(cx, merger?.dest), origins };
+}
+
+// Narrow `binding` with `reg` and add it to `bindings` chain.
+function narrow(BindingChain? bindings, Binding binding, bir:NarrowRegister reg, Position pos) returns BindingChain {
+    return { head: { name: binding.name, reg, unnarrowed: unnarrowBinding(binding) }, prev: bindings };
+}
+
+function unnarrowBinding(Binding binding) returns DeclBinding {
+    return binding is DeclBinding ? binding : binding.unnarrowed;
 }

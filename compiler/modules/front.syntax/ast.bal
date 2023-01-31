@@ -182,7 +182,8 @@ public type GroupingExpr record {|
 |};
 
 public type BinaryArithmeticOp "+" | "-" | "*" | "/" | "%";
-public type BinaryBitwiseOp "|" | "^" | "&" | "<<" | ">>" | ">>>";
+public type BitwiseShiftOp "<<" | ">>" | ">>>";
+public type BinaryBitwiseOp "|" | "^" | "&" | BitwiseShiftOp;
 public type BinaryLogicalOp "&&" | "||";
 public type BinaryRelationalOp "<" | ">" | "<=" | ">=";
 public type BinaryEqualityOp  "==" | "!=" | "===" | "!==";
@@ -440,6 +441,7 @@ public type FieldDesc record {|
     *PositionFields;
     string name;
     TypeDesc typeDesc;
+    boolean ro = false;
 |};
 
 public const INCLUSIVE_RECORD_TYPE_DESC = true;

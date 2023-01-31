@@ -52,7 +52,7 @@ function parseType(t:Context tc, Binding? b, json j, Path path) returns t:SemTyp
         Json => { return t:createJson(tc); }
         Any => { return t:ANY; }
         Never => { return t:NEVER; }
-        ReadOnly => { return t:READONLY; }
+        ReadOnly => { return t:VAL_READONLY; }
         true => { return t:booleanConst(true); }
         false => { return t:booleanConst(false); }
         // Should be able to use match patterns here
@@ -90,7 +90,7 @@ function parseCompoundType(t:Context tc, Binding? b, string k, json[] jlist, Pat
         }
         "&" => {
             t:SemType[] v = check parseTypes(tc, b, jlist, parent, 1);
-            return reduce(v, t:intersect, t:TOP);
+            return reduce(v, t:intersect, t:VAL);
         }
         "tuple" => {
             t:SemType? s = lookupDef(env, b, jlist);
@@ -99,7 +99,7 @@ function parseCompoundType(t:Context tc, Binding? b, string k, json[] jlist, Pat
             }
             t:ListDefinition def = new;
             t:SemType[] members = check parseTypes(tc, consDefBinding(jlist, def, b), jlist, parent, 1);
-            return def.define(env, members);
+            return t:defineListTypeWrapped(def, env, members);
         }
         "list" => {
             t:SemType? s = lookupDef(env, b, jlist);
@@ -110,12 +110,12 @@ function parseCompoundType(t:Context tc, Binding? b, string k, json[] jlist, Pat
             t:SemType[] members = check parseTypes(tc, consDefBinding(jlist, def, b), jlist, parent, 1);
             t:SemType rest;
             if members.length() == 0 {
-                rest = t:TOP;
+                rest = t:VAL;
             }
             else {
                 rest = members.pop();
             }
-            return def.define(env, members, rest = rest);
+            return t:defineListTypeWrapped(def, env, members, rest = rest);
         }
         "record" => {
             t:SemType? s = lookupDef(env, b, jlist);
@@ -124,7 +124,7 @@ function parseCompoundType(t:Context tc, Binding? b, string k, json[] jlist, Pat
             }
             t:MappingDefinition def = new;
             t:Field[] fields = check parseFields(tc, consDefBinding(jlist, def, b), jlist, parent, 1);
-            return def.define(env, fields, t:NEVER);
+            return t:defineMappingTypeWrapped(def, env, fields, t:NEVER);
         }
         "map" => {
             t:SemType? s = lookupDef(env, b, jlist);
@@ -138,7 +138,7 @@ function parseCompoundType(t:Context tc, Binding? b, string k, json[] jlist, Pat
             Binding? mb = consDefBinding(jlist, def, b);
             t:SemType rest = check parseType(tc, mb, jlist[1], pathAppend(parent, 1));
             t:Field[] fields = check parseFields(tc, mb, jlist, parent, 2);
-            return def.define(env, fields, rest);
+            return t:defineMappingTypeWrapped(def, env, fields, rest);
         }
         "function" => {
             t:SemType? s = lookupDef(env, b, jlist);
@@ -151,7 +151,7 @@ function parseCompoundType(t:Context tc, Binding? b, string k, json[] jlist, Pat
                 return t:FUNCTION;
             }
             t:SemType ret = v.pop();
-            return def.define(env, t:tuple(env, ...v), ret);
+            return def.define(env, t:tupleTypeWrapped(env, ...v), ret);
         }
         "error" => {
             if jlist.length() != 2 {

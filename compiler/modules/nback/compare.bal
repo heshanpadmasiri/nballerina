@@ -139,17 +139,17 @@ final RuntimeFunction arrayDecimalCompareFunction = {
 };
 
 type TaggedCompareFunction readonly & record {|
-    t:UniformTypeBitSet utCode;
+    t:BasicTypeBitSet btCode;
     RuntimeFunction optCompareFunction;
     RuntimeFunction arrayCompareFunction;
 |};
 
-final readonly & table<TaggedCompareFunction> key(utCode) compareFunctions = table [
-    { utCode: t:UT_INT, optCompareFunction: optIntCompareFunction, arrayCompareFunction: arrayIntCompareFunction },
-    { utCode: t:UT_FLOAT, optCompareFunction: optFloatCompareFunction, arrayCompareFunction: arrayFloatCompareFunction },
-    { utCode: t:UT_BOOLEAN, optCompareFunction: optBooleanCompareFunction, arrayCompareFunction: arrayBooleanCompareFunction },
-    { utCode: t:UT_STRING, optCompareFunction: optStringCompareFunction, arrayCompareFunction: arrayStringCompareFunction },
-    { utCode: t:UT_DECIMAL, optCompareFunction: optDecimalCompareFunction, arrayCompareFunction: arrayDecimalCompareFunction }
+final readonly & table<TaggedCompareFunction> key(btCode) compareFunctions = table [
+    { btCode: t:BT_INT, optCompareFunction: optIntCompareFunction, arrayCompareFunction: arrayIntCompareFunction },
+    { btCode: t:BT_FLOAT, optCompareFunction: optFloatCompareFunction, arrayCompareFunction: arrayFloatCompareFunction },
+    { btCode: t:BT_BOOLEAN, optCompareFunction: optBooleanCompareFunction, arrayCompareFunction: arrayBooleanCompareFunction },
+    { btCode: t:BT_STRING, optCompareFunction: optStringCompareFunction, arrayCompareFunction: arrayStringCompareFunction },
+    { btCode: t:BT_DECIMAL, optCompareFunction: optDecimalCompareFunction, arrayCompareFunction: arrayDecimalCompareFunction }
 ];
 
 function buildCompare(llvm:Builder builder, Scaffold scaffold, bir:CompareInsn insn) returns BuildError? {
@@ -160,7 +160,7 @@ function buildCompare(llvm:Builder builder, Scaffold scaffold, bir:CompareInsn i
     bir:Register result = insn.result;
 
     if lhsRepr is TaggedRepr && rhsRepr is TaggedRepr {
-        t:UniformTypeBitSet subtype = lhsRepr.subtype | rhsRepr.subtype;
+        t:BasicTypeBitSet subtype = lhsRepr.subtype | rhsRepr.subtype;
         if subtype == t:STRING {
             buildCompareString(builder, scaffold, buildIntCompareOp(insn.op), lhsValue, rhsValue, result);
         }
@@ -168,10 +168,10 @@ function buildCompare(llvm:Builder builder, Scaffold scaffold, bir:CompareInsn i
             buildCompareDecimal(builder, scaffold, buildIntCompareOp(insn.op), lhsValue, rhsValue, result);
         }
         else if subtype == t:NIL {
-            buildStoreBoolean(builder, scaffold, llvm:constInt(LLVM_BOOLEAN, insn.op is "<="|">=" ? 1 : 0), insn.result);
+            buildStoreBoolean(builder, scaffold, constBoolean(scaffold, insn.op is "<="|">="), insn.result);
         }
         else {
-            t:UniformTypeBitSet orderTypeMinusNil = subtype & ~t:NIL;
+            t:BasicTypeBitSet orderTypeMinusNil = subtype & ~t:NIL;
             if t:isSubtypeSimple(orderTypeMinusNil, t:LIST) {
                 t:Context tc = scaffold.typeContext();
                 t:SemType lhsType = lhs.semType;
@@ -185,8 +185,8 @@ function buildCompare(llvm:Builder builder, Scaffold scaffold, bir:CompareInsn i
                 }
             }
             else {
-                // Single uniform type code here should be guaranteed by comparability of operands
-                var orderTypeMinusNilCode = <t:UniformTypeCode>t:uniformTypeCode(orderTypeMinusNil);
+                // Single basic type code here should be guaranteed by comparability of operands
+                var orderTypeMinusNilCode = <t:BasicTypeCode>t:basicTypeCode(orderTypeMinusNil);
                 RuntimeFunction compareFunc = compareFunctions.get(orderTypeMinusNilCode).optCompareFunction;
                 buildCompareStore(builder, scaffold, insn, lhsValue, rhsValue, compareFunc);
             }    
@@ -229,13 +229,13 @@ function buildCompare(llvm:Builder builder, Scaffold scaffold, bir:CompareInsn i
 }
 
 function getArrayCompareFunction(t:Context tc, t:SemType[2] semTypes) returns RuntimeFunction {
-    t:UniformTypeBitSet memberType = 0;
+    t:BasicTypeBitSet memberType = 0;
     foreach int i in 0 ..< 2 {
-        memberType |= t:widenToUniformTypes(t:listMemberType(tc, semTypes[i], t:INT));
+        memberType |= t:widenToBasicTypes(t:listMemberTypeInner(tc, semTypes[i], t:INT));
     }
     if memberType != t:NIL {
         memberType &= ~t:NIL;
-        t:UniformTypeCode? memberTypeCode = t:uniformTypeCode(memberType);
+        t:BasicTypeCode? memberTypeCode = t:basicTypeCode(memberType);
         if memberTypeCode != () {
              TaggedCompareFunction? tcf = compareFunctions[memberTypeCode];
              if tcf != () {
@@ -252,8 +252,8 @@ function getArrayCompareFunction(t:Context tc, t:SemType[2] semTypes) returns Ru
 }
 
 function isPotentiallyExactIntArray(t:Context tc, t:SemType semType) returns boolean {
-    t:ListAtomicType? atomic = t:listAtomicTypeRw(tc, semType);
-    return atomic == () ? false : t:listAtomicSimpleArrayMemberType(atomic) == t:INT;
+    t:ListAtomicType? atomic = t:listAtomicType(tc, semType);
+    return atomic == () ? false : t:listAtomicSimpleArrayMemberTypeInner(atomic) == t:INT;
 }
 
 final readonly & map<bir:OrderOp> flippedOrderOps = {
@@ -300,7 +300,7 @@ final readonly & table<TaggedCompareResultTransform> key(op) taggedCompareResult
 function buildCompareStore(llvm:Builder builder, Scaffold scaffold, bir:CompareInsn insn, llvm:Value lhs, llvm:Value rhs, RuntimeFunction comparator) {
     TaggedCompareResultTransform transform = taggedCompareResultTransforms.get(insn.op);
     llvm:Value result = buildRuntimeFunctionCall(builder, scaffold, comparator, [lhs, rhs]);
-    buildStoreBoolean(builder, scaffold, builder.iCmp(transform.predicate, result, llvm:constInt(LLVM_INT, transform.compareResult)), insn.result);
+    buildStoreBoolean(builder, scaffold, builder.iCmp(transform.predicate, result, constInt(scaffold, transform.compareResult)), insn.result);
 }
 
 function buildCompareTaggedInt(llvm:Builder builder, Scaffold scaffold, llvm:IntPredicate op, llvm:Value lhs, llvm:Value rhs, bir:Register result) {
@@ -331,10 +331,10 @@ function buildCompareTaggedBasic(llvm:Builder builder, Scaffold scaffold, llvm:V
     llvm:BasicBlock bbNil = scaffold.addBasicBlock();
     llvm:BasicBlock bbNotNil = scaffold.addBasicBlock();
     llvm:BasicBlock bbJoin = scaffold.addBasicBlock();
-    llvm:Value isNil = builder.iCmp("eq", lhs, llvm:constNull(llvm:pointerType("i8", 1)));
+    llvm:Value isNil = builder.iCmp("eq", lhs, scaffold.llContext().constNull(llvm:pointerType("i8", 1)));
     builder.condBr(isNil, bbNil, bbNotNil);
     builder.positionAtEnd(bbNil);
-    buildStoreBoolean(builder, scaffold, llvm:constInt(LLVM_BOOLEAN, 0), result);
+    buildStoreBoolean(builder, scaffold, constBoolean(scaffold, false), result);
     builder.br(bbJoin);
     builder.positionAtEnd(bbNotNil);
     return bbJoin;
@@ -351,14 +351,14 @@ function buildCompareFloat(llvm:Builder builder, Scaffold scaffold, llvm:FloatPr
 function buildCompareString(llvm:Builder builder, Scaffold scaffold, llvm:IntPredicate op, llvm:Value lhs, llvm:Value rhs, bir:Register result) {
     buildStoreBoolean(builder, scaffold,
                       builder.iCmp(op, buildRuntimeFunctionCall(builder, scaffold, stringCmpFunction, [lhs, rhs]),
-                                   llvm:constInt(LLVM_INT, 0)),
+                                   constInt(scaffold, 0)),
                       result);
 }
 
 function buildCompareDecimal(llvm:Builder builder, Scaffold scaffold, llvm:IntPredicate op, llvm:Value lhs, llvm:Value rhs, bir:Register result) {
     buildStoreBoolean(builder, scaffold,
                       builder.iCmp(op, buildRuntimeFunctionCall(builder, scaffold, decimalCmpFunction, [lhs, rhs]),
-                                   llvm:constInt(LLVM_INT, 0)),
+                                   constInt(scaffold, 0)),
                       result);
 }
 

@@ -24,7 +24,7 @@ final RuntimeFunction typeContainsFloatFunction = {
     name: "type_contains_float",
     ty: {
         returnType: LLVM_BOOLEAN,
-        paramTypes: [llvm:pointerType(llComplexType), LLVM_DOUBLE]
+        paramTypes: [llvm:pointerType(llComplexType), LLVM_FLOAT]
     },
     attrs: ["readonly"]
 };
@@ -49,7 +49,7 @@ function buildTypeTest(llvm:Builder builder, Scaffold scaffold, bir:TypeTestInsn
     TypeTestedValue { hasType } = check buildTypeTestedValue(builder, scaffold, insn.operand, insn.pos, insn.semType);
     if insn.negated {
         buildStoreBoolean(builder, scaffold, 
-                          builder.iBitwise("xor", llvm:constInt(LLVM_BOOLEAN, 1), hasType), 
+                          builder.iBitwise("xor", constBoolean(scaffold, true), hasType), 
                           insn.result);
     }
     else {
@@ -84,9 +84,9 @@ function buildTypeTestedValue(llvm:Builder builder, Scaffold scaffold, bir:Regis
     BaseRepr baseRepr = repr.base;
     if baseRepr == BASE_REPR_TAGGED { 
         llvm:PointerValue tagged = <llvm:PointerValue>value;
-        t:UniformTypeBitSet? bitSet = testTypeAsUniformBitSet(scaffold.typeContext(), operand.semType, semType);
+        t:BasicTypeBitSet? bitSet = testTypeAsBasicBitSet(scaffold.typeContext(), operand.semType, semType);
         if bitSet != () {
-            hasType = buildHasTagInSet(builder, tagged, bitSet);
+            hasType = buildHasTagInSet(builder, scaffold, tagged, bitSet);
         }
         else {
             hasType = buildRuntimeFunctionCall(builder, scaffold, typeContainsFunction, [scaffold.getTypeTest(<t:ComplexSemType>semType), tagged]);
@@ -96,8 +96,8 @@ function buildTypeTestedValue(llvm:Builder builder, Scaffold scaffold, bir:Regis
     else if baseRepr == BASE_REPR_INT {
         t:IntSubtypeConstraints? intConstraints = t:intSubtypeConstraints(semType);
         if intConstraints != () && intConstraints.all {
-            hasType = builder.iBitwise("and", builder.iCmp("sle", llvm:constInt(LLVM_INT, intConstraints.min), value),
-                builder.iCmp("sge", llvm:constInt(LLVM_INT, intConstraints.max), value));
+            hasType = builder.iBitwise("and", builder.iCmp("sle", constInt(scaffold, intConstraints.min), value),
+                builder.iCmp("sge", constInt(scaffold, intConstraints.max), value));
         }
         else {
             hasType = buildRuntimeFunctionCall(builder, scaffold, typeContainsIntFunction, [scaffold.getTypeTest(<t:ComplexSemType>semType), value]);
@@ -109,7 +109,7 @@ function buildTypeTestedValue(llvm:Builder builder, Scaffold scaffold, bir:Regis
     else {
         BASE_REPR_BOOLEAN _ = baseRepr;
         t:BooleanSubtype sub = <t:BooleanSubtype>t:booleanSubtype(<t:ComplexSemType>semType);
-        hasType = builder.iCmp("eq", value, llvm:constInt(LLVM_BOOLEAN, sub.value ? 1 : 0));
+        hasType = builder.iCmp("eq", value, constBoolean(scaffold, sub.value));
     }
     return { hasType, valueToExactify, value, repr };
 }
@@ -119,11 +119,8 @@ function buildTypeBranch(llvm:Builder builder, Scaffold scaffold, bir:TypeBranch
     llvm:BasicBlock ifTrue = scaffold.basicBlock(insn.ifTrue);
     llvm:BasicBlock ifFalse = scaffold.basicBlock(insn.ifFalse);
     builder.condBr(hasType, ifTrue, ifFalse);
-    builder.positionAtEnd(ifTrue);
-    check buildNarrowReg(builder, scaffold, insn.ifTrueRegister);
-    builder.positionAtEnd(ifFalse);
-    check buildNarrowReg(builder, scaffold, insn.ifFalseRegister);
-    // No need to positionAtEnd(originalBB) since this is a terminator
+    scaffold.scheduleBlockNarrowReg(insn.ifTrue, insn.ifTrueRegister);
+    scaffold.scheduleBlockNarrowReg(insn.ifFalse, insn.ifFalseRegister);
 }
 
 function buildNarrowReg(llvm:Builder builder, Scaffold scaffold, bir:NarrowRegister register) returns BuildError? {
@@ -131,7 +128,7 @@ function buildNarrowReg(llvm:Builder builder, Scaffold scaffold, bir:NarrowRegis
     var sourceRepr = scaffold.getRepr(sourceReg);
     var value = builder.load(scaffold.address(sourceReg));
     t:SemType semType = register.semType;
-    if sourceRepr.base == BASE_REPR_TAGGED && testTypeAsUniformBitSet(scaffold.typeContext(), register.underlying.semType, semType) == () {
+    if sourceRepr.base == BASE_REPR_TAGGED && testTypeAsBasicBitSet(scaffold.typeContext(), register.underlying.semType, semType) == () {
         value = buildExactify(builder, scaffold, <llvm:PointerValue>value, semType);
     }
     llvm:Value narrowed = check buildNarrowRepr(builder, scaffold, sourceRepr, value, scaffold.getRepr(register));
@@ -152,7 +149,7 @@ function buildTypeMerge(llvm:Builder builder, Scaffold scaffold, bir:TypeMergeIn
     bir:Register unnarrowed = unnarrow(insn.operands[0]);
     var [sourceRepr, value] = check buildReprValue(builder, scaffold, unnarrowed);
     t:SemType semType = insn.result.semType;
-    if sourceRepr.base == BASE_REPR_TAGGED && testTypeAsUniformBitSet(scaffold.typeContext(), unnarrowed.semType, semType) == () {
+    if sourceRepr.base == BASE_REPR_TAGGED && testTypeAsBasicBitSet(scaffold.typeContext(), unnarrowed.semType, semType) == () {
         value = buildExactify(builder, scaffold, <llvm:PointerValue>value, semType);
     }
     llvm:Value narrowed = check buildNarrowRepr(builder, scaffold, sourceRepr, value, scaffold.getRepr(insn.result));
@@ -173,16 +170,16 @@ function buildNarrowRepr(llvm:Builder builder, Scaffold scaffold, Repr sourceRep
 
 function buildExactify(llvm:Builder builder, Scaffold scaffold, llvm:PointerValue tagged, t:SemType targetType) returns llvm:PointerValue {
     t:Context tc = scaffold.typeContext();
-    if t:mappingAtomicTypeRw(tc, targetType) == () && t:listAtomicTypeRw(tc, targetType) == () {
+    if t:mappingAtomicType(tc, targetType) == () && t:listAtomicType(tc, targetType) == () {
         return tagged;
     }
-    return <llvm:PointerValue>buildRuntimeFunctionCall(builder, scaffold, structureExactifyFunction, [tagged, scaffold.getExactify(t:diff(targetType, t:READONLY))]);
+    return <llvm:PointerValue>buildRuntimeFunctionCall(builder, scaffold, structureExactifyFunction, [tagged, scaffold.getExactify(t:diff(targetType, t:VAL_READONLY))]);
 }
 
-// If we can perform the type test by testing whether the value belongs to a UniformTypeBitSet, then return that bit set.
+// If we can perform the type test by testing whether the value belongs to a BasicTypeBitSet, then return that bit set.
 // Otherwise return nil.
-function testTypeAsUniformBitSet(t:Context tc, t:SemType sourceType, t:SemType targetType) returns t:UniformTypeBitSet? {
-    t:UniformTypeBitSet bitSet = t:widenToUniformTypes(targetType);
+function testTypeAsBasicBitSet(t:Context tc, t:SemType sourceType, t:SemType targetType) returns t:BasicTypeBitSet? {
+    t:BasicTypeBitSet bitSet = t:widenToBasicTypes(targetType);
     // For example, let L be a subtype of list, and support sourceType is L? and targetType is L
     // Then bitSet is t:LIST and (sourceType & bitSet) is L which is (non-proper) subtype of the targetType.
     // If a value was in bitSet and in sourceType but not in target
@@ -195,26 +192,21 @@ function testTypeAsUniformBitSet(t:Context tc, t:SemType sourceType, t:SemType t
     return ();
 }
 
-function buildHasTagInSet(llvm:Builder builder, llvm:PointerValue tagged, t:UniformTypeBitSet bitSet) returns llvm:Value {
-    t:UniformTypeCode? utCode = t:uniformTypeCode(bitSet);
-    if utCode != () {
-        return buildHasTag(builder, tagged, utCode << TAG_SHIFT);
-    }
-    t:UniformTypeBitSet roBitSet = <t:UniformTypeBitSet>(bitSet & t:UT_READONLY);
-    utCode = t:uniformTypeCode(roBitSet);
-    if utCode != () && bitSet == (roBitSet | 0xF) {
-        return buildTestTag(builder, tagged, utCode, TAG_BASIC_TYPE_MASK);
+function buildHasTagInSet(llvm:Builder builder, Scaffold scaffold, llvm:PointerValue tagged, t:BasicTypeBitSet bitSet) returns llvm:Value {
+    t:BasicTypeCode? btCode = t:basicTypeCode(bitSet);
+    if btCode != () {
+        return buildHasTag(builder, scaffold, tagged, btCode << TAG_SHIFT);
     }
     return builder.iCmp("ne",
                         builder.iBitwise("and",
                                          builder.iBitwise("shl",
-                                                          llvm:constInt(LLVM_INT, 1),
+                                                          constInt(scaffold, 1),
                                                           builder.iBitwise("lshr",
                                                                            // need to mask out the 0x20 bit
                                                                            builder.iBitwise("and",
                                                                                             buildTaggedPtrToInt(builder, tagged),
-                                                                                            llvm:constInt(LLVM_INT, TAG_MASK)),
-                                                                           llvm:constInt(LLVM_INT, TAG_SHIFT))),
-                                         llvm:constInt(LLVM_INT, bitSet)),
-                        llvm:constInt(LLVM_INT, 0));
+                                                                                            constInt(scaffold, TAG_MASK)),
+                                                                           constInt(scaffold, TAG_SHIFT))),
+                                         constInt(scaffold, bitSet)),
+                        constInt(scaffold, 0));
 }

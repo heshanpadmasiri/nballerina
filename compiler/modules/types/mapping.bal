@@ -1,113 +1,88 @@
 // Implementation specific to basic type list.
 
-public type Field [string, SemType];
+public type Field [string, SemType, boolean];
+
+public type CellField [string, CellSemType];
 
 public type MappingAtomicType readonly & record {|
     // sorted
     string[] names;
-    SemType[] types;
-    SemType rest;
+    CellSemType[] types;
+    CellSemType rest;
 |};
 
-public function mappingAtomicTypeMemberAt(MappingAtomicType mat, string k) returns SemType {
+public function mappingAtomicTypeMemberAtInnerVal(MappingAtomicType mat, string k) returns SemType {
+    return diff(mappingAtomicTypeMemberAtInner(mat, k), UNDEF);
+}
+
+public function mappingAtomicTypeMemberAtInner(MappingAtomicType mat, string k) returns SemType {
+    return cellInner(mappingAtomicTypeMemberAt(mat, k));
+}
+
+public function mappingAtomicTypeMemberAt(MappingAtomicType mat, string k) returns CellSemType {
     int? i = mat.names.indexOf(k, 0);
     return i is int ? mat.types[i] : mat.rest;
 }
 
-// This is mapping index 0
-// Used by bddFixReadOnly
-final MappingAtomicType MAPPING_SUBTYPE_RO = { names: [], types: [], rest: READONLY };
+final MappingAtomicType MAPPING_ATOMIC_RO = { names: [], types: [], rest: CELL_SEMTYPE_INNER_RO };
 
 public class MappingDefinition {
     *Definition;
-    private RecAtom? roRec = ();
-    private RecAtom? rwRec = ();
+    private RecAtom? rec = ();
     private SemType? semType = ();
 
     public function getSemType(Env env) returns SemType {
         SemType? s = self.semType;
         if s == () {
-            RecAtom ro = env.recMappingAtom();
-            RecAtom rw = env.recMappingAtom();
-            self.roRec = ro;
-            self.rwRec = rw;
-            return self.createSemType(env, ro, rw);
+            RecAtom rec = env.recMappingAtom();
+            self.rec = rec;
+            return self.createSemType(env, rec);
         }
         else {
             return s;
         }
     }
 
-    public function define(Env env, Field[] fields, SemType rest) returns SemType {
+    public function define(Env env, CellField[] fields, CellSemType rest) returns SemType {
         var [names, types] = splitFields(fields);
-        MappingAtomicType rwType = {
+        MappingAtomicType atomicType = {
             names: names.cloneReadOnly(),
             types: types.cloneReadOnly(),
             rest
         };
-        Atom rw;
-        RecAtom? rwRec = self.rwRec;
-        if rwRec != () {
-            rw = rwRec;
-            env.setRecMappingAtomType(rwRec, rwType);
+        Atom atom;
+        RecAtom? rec = self.rec;
+        if rec != () {
+            atom = rec;
+            env.setRecMappingAtomType(rec, atomicType);
+        }
+        else if fields.length() == 0 && rest == CELL_SEMTYPE_INNER {
+            return MAPPING;
         }
         else {
-            rw = env.mappingAtom(rwType);
+            atom = env.mappingAtom(atomicType);
         }
-        Atom ro;
-        MappingAtomicType roType = readOnlyMappingAtomicType(rwType);
-        if roType === rwType {
-            RecAtom? roRec = self.roRec;
-            if roRec == () {
-                // share the definitions
-                ro = rw;
-            }
-            else {
-                ro = roRec;
-                env.setRecMappingAtomType(roRec, rwType);
-            }
-        }
-        else {
-            ro = env.mappingAtom(roType);
-            RecAtom? roRec = self.roRec;
-            if roRec != () {
-                env.setRecMappingAtomType(roRec, roType);
-            }
-        }
-        return self.createSemType(env, ro, rw);
+        return self.createSemType(env, atom);
     }
-    
-    private function createSemType(Env env, Atom ro, Atom rw) returns SemType {
-        BddNode roBdd = bddAtom(ro);
-        BddNode rwBdd;
-        if atomCmp(ro, rw) == 0 {
-            // share the BDD
-            rwBdd = roBdd;
-        }
-        else {
-            rwBdd = bddAtom(rw);
-        }
-        SemType s = createComplexSemType(0, [[UT_MAPPING_RO, roBdd], [UT_MAPPING_RW, rwBdd]]);
+
+    private function createSemType(Env env, Atom atom) returns SemType {
+        BddNode bdd = bddAtom(atom);
+        SemType s = basicSubtype(BT_MAPPING, bdd);
         self.semType = s; 
         return s;
-    }       
+    } 
 }
 
-function readOnlyMappingAtomicType(MappingAtomicType ty) returns MappingAtomicType {
-    if typeListIsReadOnly(ty.types) && isReadOnly(ty.rest) {
-        return ty;
-    }
-    return {
-        names: ty.names,
-        types: readOnlyTypeList(ty.types),
-        rest: intersect(ty.rest, READONLY)
-    };   
+public function defineMappingTypeWrapped(MappingDefinition md, Env env, Field[] fields, SemType rest, CellMutability mut = CELL_MUT_LIMITED) returns SemType {
+    CellField[] cellFields = from Field f in fields select [f[0], cellContaining(env, f[1], f[2] ? CELL_MUT_NONE : mut)];
+    CellSemType restCell = cellContaining(env, union(rest, UNDEF), rest == NEVER ? CELL_MUT_NONE : mut);
+    return md.define(env, cellFields, restCell);
 }
 
-function splitFields(Field[] fields) returns [string[], SemType[]] {
-    Field[] sortedFields = fields.sort("ascending", fieldName);
+function splitFields(CellField[] fields) returns [string[], CellSemType[]] {
+    CellField[] sortedFields = fields.sort("ascending", fieldName);
     string[] names = [];
-    SemType[] types = [];
+    CellSemType[] types = [];
     foreach var [s, t] in sortedFields {
         names.push(s);
         types.push(t);
@@ -115,47 +90,24 @@ function splitFields(Field[] fields) returns [string[], SemType[]] {
     return [names, types];
 }
 
-isolated function fieldName(Field f) returns string {
+isolated function fieldName(CellField f) returns string {
     return f[0];
 }
 
-function mappingRoSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
-    return mappingSubtypeIsEmpty(cx, bddFixReadOnly(<Bdd>t));
-}
-
 function mappingSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
-    return mappingSubtypeIsEmptyWitness(cx, t, new(cx));    
-}
-
-function mappingRoSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
-    return mappingSubtypeIsEmptyWitness(cx, bddFixReadOnly(<Bdd>t), witness);
+    return memoSubtypeIsEmpty(cx, cx.mappingMemo, mappingBddIsEmpty, <Bdd>t);
 }
 
 function mappingSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
-    Bdd b = <Bdd>t;
-    BddMemo? mm = cx.mappingMemo[b];
-    // todo: memoize 
-    BddMemo m;
-    if mm == () {
-        m = { bdd: b };
-        cx.mappingMemo.add(m);
-    }
-    else {
-        m = mm;
-        boolean? res = m.isEmpty;
-        if res == () {
-            // we've got a loop
-            // XXX is this right???
-            return true;
-        }
-        else {
-            return res;
-        }
-    }
-    boolean isEmpty = bddEvery(cx, b, (), (), mappingFormulaIsEmpty, witness);
-    m.isEmpty = isEmpty;
-    m.witness = witness.get();
-    return isEmpty;    
+    return mappingSubtypeIsEmpty(cx, t);
+}
+
+function mappingBddIsCyclic(Context cx, Bdd b) returns boolean {
+    return memoSubtypeIsCyclic(cx, cx.mappingMemo, mappingBddIsEmpty, b);
+}
+
+function mappingBddIsEmpty(Context cx, Bdd b) returns boolean {
+    return bddEvery(cx, b, (), (), mappingFormulaIsEmpty);
 }
 
 // This works the same as the tuple case, except that instead of
@@ -163,13 +115,7 @@ function mappingSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollecto
 function mappingFormulaIsEmpty(Context cx, Conjunction? posList, Conjunction? negList, WitnessCollector witness) returns boolean {
     TempMappingSubtype combined;
     if posList == () {
-        combined = {
-            types: [],
-            names: [],
-            // This isn't right for the readonly case.
-            // bddFixReadOnly avoids this
-            rest: TOP
-        };
+        combined = MAPPING_ATOMIC_INNER;
     }
     else {
         // combine all the positive atoms using intersection
@@ -180,7 +126,7 @@ function mappingFormulaIsEmpty(Context cx, Conjunction? posList, Conjunction? ne
                 break;
             }
             else {
-                var m = intersectMapping(combined, cx.mappingAtomType(p.atom));
+                var m = intersectMapping(cx.env, combined, cx.mappingAtomType(p.atom));
                 if m == () {
                     return true;
                 }
@@ -216,12 +162,12 @@ function mappingInhabited(Context cx, TempMappingSubtype pos, Conjunction? negLi
             // so we can move on to the next one
 
             // Deal the easy case of two closed records fast.
-            if isNever(pos.rest) && isNever(neg.rest) {
+            if  cellInner(pos.rest) == UNDEF &&  cellInner(neg.rest) == UNDEF {
                 return mappingInhabited(cx, pos, negList.next, witness);
             }
             pairing = new (pos, neg);
             foreach var {type1: posType, type2: negType} in pairing {
-                if isNever(posType) || isNever(negType) {
+                if  cellInner(posType) == UNDEF ||  cellInner(negType) == UNDEF {
                     return mappingInhabited(cx, pos, negList.next, witness);
                 }
             }
@@ -234,19 +180,17 @@ function mappingInhabited(Context cx, TempMappingSubtype pos, Conjunction? negLi
         if !isEmpty(cx, diff(pos.rest, neg.rest)) {
             return mappingInhabited(cx, pos, negList.next, witness);
         }
-        foreach var { name, index1, type1: posType, type2: negType } in pairing {
-            SemType d = diff(posType, negType);
+        foreach var { index1, type1: posType, type2: negType } in pairing {
+            CellSemType d = <CellSemType>diff(posType, negType);
+             if index1 is () {
+                // We cannot match the rest field of the positive with named field of a negative atom
+                return mappingInhabited(cx, pos, negList.next);
+            }
             if !isEmpty(cx, d) {
                 TempMappingSubtype mt;
-                if index1 == () {
-                    // the posType came from the rest type
-                    mt = insertField(pos, name, d);
-                }
-                else {
-                    SemType[] posTypes = shallowCopyTypes(pos.types);
-                    posTypes[index1] = d;
-                    mt = { types: posTypes, names: pos.names, rest: pos.rest };
-                }
+                CellSemType[] posTypes = shallowCopyCellTypes(pos.types);
+                posTypes[index1] = d;
+                mt = { types: posTypes, names: pos.names, rest: pos.rest };
                 if mappingInhabited(cx, mt, negList.next, witness) {
                     return true;
                 }
@@ -256,9 +200,9 @@ function mappingInhabited(Context cx, TempMappingSubtype pos, Conjunction? negLi
     }
 }
 
-function insertField(TempMappingSubtype m, string name, SemType t) returns TempMappingSubtype {
+function insertField(TempMappingSubtype m, string name, CellSemType t) returns TempMappingSubtype {
     string[] names = shallowCopyStrings(m.names);
-    SemType[] types = shallowCopyTypes(m.types);
+    CellSemType[] types = shallowCopyCellTypes(m.types);
     int i = names.length();
     while true {
         if i == 0 || name <= names[i - 1] {
@@ -273,38 +217,54 @@ function insertField(TempMappingSubtype m, string name, SemType t) returns TempM
     return { names, types, rest: m.rest };
 }
 
+function intersectMappingAtoms(Env env, MappingAtomicType[] atoms) returns [SemType, MappingAtomicType]? {
+    if atoms.length() == 0 {
+        return ();
+    }
+    MappingAtomicType atom = atoms[0];
+    foreach int i in 1 ..< atoms.length() {
+        var tmpAtom = intersectMapping(env, atom, atoms[i]);
+        if tmpAtom is () {
+            return ();
+        }
+        atom = tmpAtom.cloneReadOnly();
+    }
+    SemType semType = createBasicSemType(BT_MAPPING, bddAtom(env.mappingAtom(atom)));
+    return [semType, atom];
+}
+
 type TempMappingSubtype record {|
     // sorted
     string[] names;
-    SemType[] types;
-    SemType rest;
+    CellSemType[] types;
+    CellSemType rest;
 |};
 
-function intersectMapping(TempMappingSubtype m1, TempMappingSubtype m2) returns TempMappingSubtype? {
+function intersectMapping(Env env, TempMappingSubtype m1, TempMappingSubtype m2) returns TempMappingSubtype? {
     string[] names = [];
-    SemType[] types = [];
+    CellSemType[] types = [];
     foreach var { name, type1, type2 } in new MappingPairing(m1, m2) {
         names.push(name);
-        SemType t = intersect(type1, type2);
-        if isNever(t) {
+        CellSemType t = intersectMemberSemTypes(env, type1, type2);
+        if cellInner(type1) == NEVER {
             return ();
         }
         types.push(t);
     }
-    SemType rest = intersect(m1.rest, m2.rest);
+    CellSemType rest = intersectMemberSemTypes(env, m1.rest, m2.rest);
     return { names, types, rest };
 }
 
-type FieldPair record {|
+type CellFieldPair record {|
     string name;
-    SemType type1;
-    SemType type2;
+    CellSemType type1;
+    CellSemType type2;
     int? index1 = ();
     int? index2 = ();
 |};
 
 public type MappingPairIterator object {
-    public function next() returns record {| FieldPair value; |}?;
+    public function next() returns record {| CellFieldPair value; |}?;
 };
 
 class MappingPairing {
@@ -312,14 +272,14 @@ class MappingPairing {
     *object:Iterable;
     private final string[] names1;
     private final string[] names2;
-    private final SemType[] types1;
-    private final SemType[] types2;
+    private final CellSemType[] types1;
+    private final CellSemType[] types2;
     private final int len1;
     private final int len2;
     private int i1 = 0;
     private int i2 = 0;
-    private final SemType rest1;
-    private final SemType rest2;
+    private final CellSemType rest1;
+    private final CellSemType rest2;
 
     function init(TempMappingSubtype m1, TempMappingSubtype m2) {
         self.names1 = m1.names;
@@ -341,8 +301,8 @@ class MappingPairing {
         self.i2 = 0;
     }
 
-    public function next() returns record {| FieldPair value; |}? {
-        FieldPair p;
+    public function next() returns record {| CellFieldPair value; |}? {
+        CellFieldPair p;
         if self.i1 >= self.len1 {
             if self.i2 >= self.len2 {
                 return ();
@@ -400,76 +360,62 @@ class MappingPairing {
         return { value: p };
     }
     
-    private function curType1() returns SemType => self.types1[self.i1];
+    private function curType1() returns CellSemType => self.types1[self.i1];
     
-    private function curType2() returns SemType => self.types2[self.i2];
+    private function curType2() returns CellSemType => self.types2[self.i2];
     
     private function curName1() returns string => self.names1[self.i1];
 
     private function curName2() returns string => self.names2[self.i2];
 }
 
-function bddMappingMemberType(Context cx, Bdd b, StringSubtype|true key, SemType accum) returns SemType {
+function bddMappingMemberTypeInner(Context cx, Bdd b, StringSubtype|true key, SemType accum) returns SemType {
     if b is boolean {
         return b ? accum : NEVER;
     }
     else {
-        return union(bddMappingMemberType(cx, b.left, key,
-                                          intersect(mappingAtomicMemberType(cx.mappingAtomType(b.atom), key),
+        return union(bddMappingMemberTypeInner(cx, b.left, key,
+                                          intersect(mappingAtomicMemberTypeInner(cx.mappingAtomType(b.atom), key),
                                                     accum)),
-                     union(bddMappingMemberType(cx, b.middle, key, accum),
-                           bddMappingMemberType(cx, b.right, key, accum)));
+                     union(bddMappingMemberTypeInner(cx, b.middle, key, accum),
+                           bddMappingMemberTypeInner(cx, b.right, key, accum)));
     }
 }
 
-function mappingAtomicMemberType(MappingAtomicType atomic, StringSubtype|true key) returns SemType {
-    SemType memberType = NEVER;
-    foreach SemType ty in mappingAtomicApplicableMemberTypes(atomic, key) {
-        memberType = union(memberType, ty);
+function mappingAtomicMemberTypeInner(MappingAtomicType atomic, StringSubtype|true key) returns SemType {
+    SemType? memberType = ();
+    foreach SemType ty in mappingAtomicApplicableMemberTypesInner(atomic, key) {
+        if memberType == () {
+            memberType = ty;
+        }
+        else {
+            memberType = union(memberType, ty);
+        }
     }
-    return memberType;
+    return memberType ?: UNDEF;
 }
 
-function mappingAtomicApplicableMemberTypes(MappingAtomicType atomic, StringSubtype|true key) returns SemType[] {
+function mappingAtomicApplicableMemberTypesInner(MappingAtomicType atomic, StringSubtype|true key) returns SemType[] {
+    SemType[] types = from CellSemType t in atomic.types select cellInner(t);
+    SemType rest = cellInner(atomic.rest);
     SemType[] memberTypes = [];
     if key == true {
-        memberTypes.push(...atomic.types);
-        memberTypes.push(atomic.rest);
+        memberTypes.push(...types);
+        memberTypes.push(rest);
     }
     else {
         StringSubtypeListCoverage coverage = stringSubtypeListCoverage(key, atomic.names);
         foreach int index in coverage.indices {
-            memberTypes.push(atomic.types[index]);
+            memberTypes.push(types[index]);
         }
         if !coverage.isSubtype {
-            memberTypes.push(atomic.rest);
+            memberTypes.push(rest);
         }
     }
     return memberTypes;
 }
 
-function bddMappingMemberRequired(Context cx, Bdd b, StringSubtype k, boolean requiredOnPath) returns boolean {
-    if b is boolean {
-        return b ? requiredOnPath : true;
-    }
-    else {
-        return bddMappingMemberRequired(cx, b.left, k,
-                                        requiredOnPath || stringSubtypeContainedIn(k, cx.mappingAtomType(b.atom).names))
-               && bddMappingMemberRequired(cx, b.middle, k, requiredOnPath)
-               && bddMappingMemberRequired(cx, b.right, k, requiredOnPath);
-    }
-}
-
-final UniformTypeOps mappingRoOps = {
-    union: bddSubtypeUnion,
-    intersect: bddSubtypeIntersect,
-    diff: bddSubtypeDiff,
-    complement: bddSubtypeComplement,
-    isEmpty: mappingRoSubtypeIsEmpty,
-    isEmptyWitness:  mappingRoSubtypeIsEmptyWitness
-};
-
-final UniformTypeOps mappingRwOps = {
+final BasicTypeOps mappingOps = {
     union: bddSubtypeUnion,
     intersect: bddSubtypeIntersect,
     diff: bddSubtypeDiff,
@@ -477,4 +423,3 @@ final UniformTypeOps mappingRwOps = {
     isEmpty: mappingSubtypeIsEmpty,
     isEmptyWitness:  mappingSubtypeIsEmptyWitness
 };
-

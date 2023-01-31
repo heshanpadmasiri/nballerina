@@ -28,6 +28,37 @@ function resolveTypes(ModuleSymbols mod) returns ResolveTypeError? {
     foreach var defn in mod.defns {
         check resolveDefn(mod, defn);
     }
+    check finishDeferredEmptinessChecks(mod);
+}
+
+function finishDeferredEmptinessChecks(ModuleSymbols mod) returns ResolveTypeError? {
+    if !mod.tc.env.isReady() {
+        panic err:impossible("type environment is not ready");
+    }
+    foreach var { semType, modDefn, td } in mod.deferredEmptinessChecks {
+        // XXX When we can give multiple errors we should check all the deferred emptiness checks
+        check nonEmptyTypeNoDefer(mod, semType, modDefn, td);
+    }
+    d:Location? emptyLoc = mod.emptyNonCyclicTypeLocation;
+    if emptyLoc !is () {
+        return err:semantic("intersection must not be empty", emptyLoc);
+    }
+}
+
+function nonEmptyTypeNoDefer(ModuleSymbols mod, t:SemType semType, s:ModuleLevelDefn modDefn, s:TypeDesc td) returns ResolveTypeError? {
+    if !t:isEmpty(mod.tc, semType) {
+        return;
+    }
+    d:Position startPos = td.startPos;
+    d:Position endPos = td.endPos;
+    d:Location loc = s:locationInDefn(modDefn, { startPos, endPos });
+    if (td is s:BinaryTypeDesc && td.op is "&") || t:isMemberNever(mod.tc, semType) {
+        return err:semantic("intersection must not be empty", loc);
+    }
+    if t:isCyclic(mod.tc, semType) {
+        return err:semantic("invalid cyclic type", loc);
+    }
+    mod.emptyNonCyclicTypeLocation = loc;
 }
 
 function resolveDefn(ModuleSymbols mod, s:ModuleLevelDefn defn) returns ResolveTypeError? {
@@ -52,7 +83,7 @@ function resolveFunctionSignature(ModuleSymbols mod, s:FunctionDefn defn) return
         if x.isRest {
             restParamType = check resolveSubsetTypeDesc(mod, defn, x.td);
             t:ListDefinition d = new;
-            t:SemType arrTy = d.define(mod.tc.env, rest = <t:SemType>restParamType);
+            t:SemType arrTy = t:defineListTypeWrapped(d, mod.tc.env, rest = <t:SemType>restParamType, mut = t:CELL_MUT_NONE);
             paramTypes.push(arrTy);
         }
         else {
@@ -74,9 +105,9 @@ function resolveSubsetTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn defn, s:Type
 }
 
 function isSubsetUnionType(t:SemType ty) returns boolean {
-    return (ty is t:UniformTypeBitSet
-            && ((t:isSubtypeSimple(ty, <t:UniformTypeBitSet>(t:ERROR|t:FLOAT|t:STRING|t:INT|t:BOOLEAN|t:NIL)) && ty != t:NEVER)
-                || (ty == t:ANY || ty == t:TOP)));
+    return (ty is t:BasicTypeBitSet
+            && ((t:isSubtypeSimple(ty, <t:BasicTypeBitSet>(t:ERROR|t:FLOAT|t:STRING|t:INT|t:BOOLEAN|t:NIL)) && ty != t:NEVER)
+                || (ty == t:ANY || ty == t:VAL)));
 }
 
 function resolveTypeDefn(ModuleSymbols mod, s:TypeDefn defn, int depth) returns t:SemType|ResolveTypeError {
@@ -127,7 +158,7 @@ function resolveTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn modDefn, int depth
             "handle" => { return t:HANDLE; }
             "json" => { return t:createJson(mod.tc); }
             "never" => { return t:NEVER; }
-            "readonly" => { return t:READONLY; }
+            "readonly" => { return t:VAL_READONLY; }
             "typedesc" => { return t:TYPEDESC; }
             "xml" => { return t:XML; }
         }
@@ -147,13 +178,13 @@ function resolveTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn modDefn, int depth
                 // (i.e. there's a recursive type still under construction).
                 // To solve this, we would need to build a list of intersections to be checked later.
                 // But this is very unlikely to be a problem in practice.
-                if t:isNever(accumType)
-                   || (accumType !is t:UniformTypeBitSet && env.isReady() && t:isEmpty(mod.tc, accumType)) {
+                if accumType == t:NEVER
+                   || (accumType !is t:BasicTypeBitSet && env.isReady() && t:isEmpty(mod.tc, accumType)) {
                     return err:semantic("intersection must not be empty", s:locationInDefn(modDefn, td.opPos[i - 1]));
                 }
             }
         }
-        return accumType;
+        return check nonEmptyType(mod, modDefn, td, accumType);
     }
     // JBUG would like to use match patterns here. This cannot be done properly without fixing #33309
     if td is s:TupleTypeDesc {
@@ -167,12 +198,12 @@ function resolveTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn modDefn, int depth
             if restTd != () {
                 rest = check resolveTypeDesc(mod, modDefn, depth + 1, restTd);
             }
-            return d.define(env, initial = members, rest = rest);
+            return check nonEmptyType(mod, modDefn, td, t:defineListTypeWrapped(d, env, initial = members, rest = rest));
         }
         else {
-            return defn.getSemType(env);
-        }   
-    }    
+            return check nonEmptyType(mod, modDefn, td, defn.getSemType(env));
+        }
+    } 
     if td is s:ArrayTypeDesc {
         t:ListDefinition? defn = td.defn;
         if defn == () {
@@ -181,18 +212,18 @@ function resolveTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn modDefn, int depth
             t:SemType t = check resolveTypeDesc(mod, modDefn, depth + 1, td.member);
             foreach s:SimpleConstExpr? len in td.dimensions.reverse() {
                 if len == () {
-                    t = d.define(env, rest = t);
+                    t = t:defineListTypeWrapped(d, env, rest = t);
                 }
                 else {
                     int length = check resolveConstExprForInt(mod, modDefn, len, "array length should be a non-negative integer constant");
-                    t = d.define(env, [t], length);
+                    t = t:defineListTypeWrapped(d, env, [t], length);
                 }
             }
-            return t;
+            return check nonEmptyType(mod, modDefn, td, t);
         }
         else {
-            return defn.getSemType(env);
-        }   
+            return check nonEmptyType(mod, modDefn, td, defn.getSemType(env));
+        }
     }
     if td is s:MappingTypeDesc {
         t:MappingDefinition? defn = td.defn;
@@ -201,8 +232,12 @@ function resolveTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn modDefn, int depth
             td.defn = d;
             // JBUG this panics if done with `from` and there's an error is resolveTypeDesc
             t:Field[] fields = [];
-            foreach var { name, typeDesc } in td.fields {
-                fields.push([name, check resolveTypeDesc(mod, modDefn, depth + 1, typeDesc)]);
+            foreach var { name, typeDesc, ro } in td.fields {
+                t:SemType fieldTy = check resolveTypeDesc(mod, modDefn, depth + 1, typeDesc);
+                if fieldTy == t:NEVER {
+                    return err:semantic("record field can't be never", s:locationInDefn(modDefn, { startPos: typeDesc.startPos, endPos: typeDesc.endPos }));
+                }
+                fields.push([name, fieldTy, ro]);
             }
             map<s:FieldDesc> fieldsByName = {};
             foreach var fd in td.fields {
@@ -222,10 +257,10 @@ function resolveTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn modDefn, int depth
             else {
                 rest = t:NEVER;
             }
-            return d.define(env, fields, rest);
+            return check nonEmptyType(mod, modDefn, td, t:defineMappingTypeWrapped(d, env, fields, rest));
         }
         else {
-            return defn.getSemType(env);
+            return check nonEmptyType(mod, modDefn, td, defn.getSemType(env));
         }
     }
     if td is s:TypeDescRef {
@@ -292,7 +327,7 @@ function resolveTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn modDefn, int depth
             t:SemType[] args = from var x in a select check resolveTypeDesc(mod, modDefn, depth + 1, x);
             s:TypeDesc? retTy = td.ret;
             t:SemType ret = retTy != () ? check resolveTypeDesc(mod, modDefn, depth + 1, retTy) : t:NIL;
-            return d.define(env, t:tuple(env, ...args), ret);
+            return d.define(env, t:tupleTypeWrappedRo(env, ...args), ret);
         }
         else {
             return defn.getSemType(env);
@@ -324,9 +359,19 @@ function resolveTypeDesc(ModuleSymbols mod, s:ModuleLevelDefn modDefn, int depth
             d:Location loc =  d:location(modDefn.part.file, { startPos: td.startPos, endPos: td.endPos });
             return err:semantic("type parameter for table is not a record", loc=loc);
         }
-        return t:tableContaining(t);
+        return t:tableContaining(env, t);
     }
     panic error("unimplemented type-descriptor");
+}
+
+function nonEmptyType(ModuleSymbols mod, s:ModuleLevelDefn modDefn, s:TypeDesc td, t:SemType semType) returns t:SemType|ResolveTypeError {
+    if !mod.tc.env.isReady() {
+        mod.deferredEmptinessChecks.push({ semType, modDefn, td });
+    }
+    else {
+        check nonEmptyTypeNoDefer(mod, semType, modDefn, td);
+    }
+    return semType;
 }
 
 function resolveBuiltinTypeDesc(t:Context tc, s:SubsetBuiltinTypeDesc td) returns t:SemType {

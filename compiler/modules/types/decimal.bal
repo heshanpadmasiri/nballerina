@@ -7,7 +7,7 @@ public type DecimalSubtype readonly & record {|
 
 public function decimalConst(decimal value) returns ComplexSemType {
     DecimalSubtype st = { allowed: true, values: [value] };
-    return uniformSubtype(UT_DECIMAL, st);
+    return basicSubtype(BT_DECIMAL, st);
 }
 
 function decimalSubtypeSingleValue(SubtypeData d) returns decimal? {
@@ -50,10 +50,6 @@ function decimalSubtypeIntersect(SubtypeData d1, SubtypeData d2) returns Subtype
     return createDecimalSubtype(allowed, values);
 }
 
-function decimalSubtypeDiff(SubtypeData d1, SubtypeData d2) returns SubtypeData {
-    return decimalSubtypeIntersect(d1, decimalSubtypeComplement(d2));
-}
-
 function decimalSubtypeComplement(SubtypeData d) returns SubtypeData {
     DecimalSubtype s = <DecimalSubtype>d;
     return createDecimalSubtype(!s.allowed, s.values);
@@ -67,10 +63,9 @@ function createDecimalSubtype(boolean allowed, decimal[] values) returns Subtype
     return res;
 }
 
-final UniformTypeOps decimalOps = {
+final BasicTypeOps decimalOps = {
     union: decimalSubtypeUnion,
     intersect: decimalSubtypeIntersect,
-    diff: decimalSubtypeDiff,
     complement: decimalSubtypeComplement,
     isEmpty: notIsEmpty
 };

@@ -214,7 +214,7 @@ function validEntryPoint(ModuleDefns mod) returns err:Diagnostic? {
         if defn.params.length() > 0 {
             return err:unimplemented(`parameters for ${"main"} not yet implemented`, s:defnLocation(defn));
         }
-        if !t:isNever(t:intersect((<bir:FunctionSignature>defn.signature).returnType, t:ERROR)) {
+        if t:intersect((<bir:FunctionSignature>defn.signature).returnType, t:ERROR) != t:NEVER {
             return err:unimplemented(`returning an error from ${"main"} function is not implemented`, s:defnLocation(defn));
         }
     }
@@ -239,7 +239,7 @@ function validInitReturnType(s:FunctionDefn defn) returns err:Semantic? {
     if t:intersect(returnType, t:NIL) != t:NIL {
         return err:semantic(`return type of ${defn.name} function must allow nil`, s:defnLocation(defn));
     }
-    if !t:isSubtypeSimple(returnType, t:uniformTypeUnion((1 << t:UT_NIL) | (1 << t:UT_ERROR))) {
+    if !t:isSubtypeSimple(returnType, t:basicTypeUnion((1 << t:BT_NIL) | (1 << t:BT_ERROR))) {
         return err:semantic(`return type of ${defn.name} function must be a subtype of ${"error?"}`, s:defnLocation(defn));
     }
 }
