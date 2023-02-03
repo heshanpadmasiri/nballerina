@@ -1,7 +1,10 @@
 import wso2/nballerina.types as t;
 
 public function typeWitnessToString(t:WitnessCollector witness) returns string {
-    t:WitnessValue value = witness.get();
+    return witnessValueToString(witness.get());
+}
+
+function witnessValueToString(t:WitnessValue value) returns string {
     if value is string {
         return value;
     }
@@ -30,7 +33,7 @@ function nonStringWitnessToExpr(t:WrappedSingleValue|map<t:WitnessValue>|t:ListW
     else if value is map<t:WitnessValue> {
         return mappingWitnessToLiteral(value);
     }
-    else if value is t:ListWitnessValue {
+    else {
         return listWitnessToLiteral(value);
     }
 }
@@ -76,7 +79,7 @@ function singleValueToLiteral(t:WrappedSingleValue value) returns LiteralExpr|Nu
     else if v is float {
         return { startPos, endPos, typeSuffix: "f", untypedLiteral: v.toString() };
     }
-    else if v is decimal {
+    else {
         return { startPos, endPos, typeSuffix: "d", untypedLiteral: v.toString() };
     }
 }

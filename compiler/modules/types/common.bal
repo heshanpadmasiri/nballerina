@@ -13,7 +13,8 @@ function and(Atom atom, Conjunction? next) returns Conjunction {
     return { atom, next };
 }
 
-type BddIsEmptyPredicate function(Context cx, Bdd b) returns boolean;
+// TODO add witness to this
+type BddIsEmptyPredicate function(Context cx, Bdd b, WitnessCollector witness) returns boolean;
 
 // Memoization logic
 // Castagna's paper does not deal with this fully.
@@ -29,7 +30,7 @@ type BddIsEmptyPredicate function(Context cx, Bdd b) returns boolean;
 // This follows Frisch's approach of undoing memoizations that turn out to be wrong.
 // (I did not succeed in fully understanding his approach, so I am not
 // completely sure if we are doing the same.)
-function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredicate isEmptyPredicate, Bdd b) returns boolean {
+function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredicate isEmptyPredicate, Bdd b, WitnessCollector witness) returns boolean {
     BddMemo? mm = memoTable[b];
     BddMemo m;
     if mm != () {
@@ -40,6 +41,7 @@ function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredic
         }
         if res is boolean {
             // We know whether b is empty or not for certain
+            witness.set(mm.witness);
             return res;
         }
         else if res != () {
@@ -57,7 +59,8 @@ function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredic
     m.empty = "provisional";
     int initStackDepth = cx.memoStack.length();
     cx.memoStack.push(m);
-    boolean isEmpty = isEmptyPredicate(cx, b);
+    boolean isEmpty = isEmptyPredicate(cx, b, witness);
+    m.witness = witness.get();
     boolean isLoop = m.empty == "loop";
     if !isEmpty || initStackDepth == 0 {
         foreach int i in initStackDepth + 1 ..< cx.memoStack.length() {
@@ -71,74 +74,8 @@ function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredic
         // This means that the shapes in the type would all be infinite.
         // But we define types inductively, which means we only consider finite shapes.
         m.empty = isLoop && isEmpty ? "cyclic" : isEmpty;
-    }
-    return isEmpty;
-}
+        witness.set(m.witness);
 
-function memoSubtypeIsCyclic(Context cx, BddMemoTable memoTable, BddIsEmptyPredicate isEmptyPredicate, Bdd b) returns boolean {
-    // This assume that we have tested (and so memoized) whether the type is empty. 
-    BddMemo mm = memoTable.get(b);
-    return mm.empty == "cyclic";
-}
-
-type BddIsEmptyPredicate function(Context cx, Bdd b) returns boolean;
-
-// Memoization logic
-// Castagna's paper does not deal with this fully.
-// Although he calls it memoization, it is not, strictly speaking, just memoization,
-// since it is not just an optimization, but required for correct handling of
-// recursive types.
-// The handling of recursive types depends on our types being defined inductively,
-// rather than coinductively. This means that each shape that is a member of the
-// set denoted by the type is finite.
-// There is a tricky problem here with memoizing results that rely on assumptions
-// that subsequently turn out to be false.
-// Memoization/caching is discussed in section 7.1.2 of the Frisch thesis.
-// This follows Frisch's approach of undoing memoizations that turn out to be wrong.
-// (I did not succeed in fully understanding his approach, so I am not
-// completely sure if we are doing the same.)
-function memoSubtypeIsEmpty(Context cx, BddMemoTable memoTable, BddIsEmptyPredicate isEmptyPredicate, Bdd b) returns boolean {
-    BddMemo? mm = memoTable[b];
-    BddMemo m;
-    if mm != () {
-        MemoEmpty res = mm.empty;
-        if res == "cyclic" {
-            // Since we define types inductively we consider these to be empty
-            return true;
-        }
-        if res is boolean {
-            // We know whether b is empty or not for certain
-            return res;
-        }
-        else if res != () {
-            // We've got a loop.
-            mm.empty = "loop";
-            return true;
-        }
-        // nil case is same as not having a memo, so fall through
-        m = mm;
-    }
-    else {
-        m = { bdd: b };
-        memoTable.add(m);
-    }
-    m.empty = "provisional";
-    int initStackDepth = cx.memoStack.length();
-    cx.memoStack.push(m);
-    boolean isEmpty = isEmptyPredicate(cx, b);
-    boolean isLoop = m.empty == "loop";
-    if !isEmpty || initStackDepth == 0 {
-        foreach int i in initStackDepth + 1 ..< cx.memoStack.length() {
-            MemoEmpty memoEmpty = cx.memoStack[i].empty;
-            if memoEmpty is "provisional"|"loop"|"cyclic" {
-                cx.memoStack[i].empty = isEmpty ? isEmpty : ();
-            }
-        }
-        cx.memoStack.setLength(initStackDepth);
-        // The only way that we have found that this can be empty is by going through a loop.
-        // This means that the shapes in the type would all be infinite.
-        // But we define types inductively, which means we only consider finite shapes.
-        m.empty = isLoop && isEmpty ? "cyclic" : isEmpty;
     }
     return isEmpty;
 }

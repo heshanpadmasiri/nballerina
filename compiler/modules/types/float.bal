@@ -63,10 +63,22 @@ function createFloatSubtype(boolean allowed, float[] values) returns SubtypeData
     return res;
 }
 
+// FIXME: common code with int, float, boolean and decimal
+function floatSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector w) returns false {
+    if t == true {
+        w.allOfTypes(BT_FLOAT);
+    }
+    else {
+        w.remainingSubType(<FloatSubtype>t);
+    }
+    return <false> notIsEmpty(cx, t);
+}
+
 final BasicTypeOps floatOps = {
     union: floatSubtypeUnion,
     intersect: floatSubtypeIntersect,
     complement: floatSubtypeComplement,
     // Empty float sets don't use subtype representation.
-    isEmpty: notIsEmpty
+    isEmpty: notIsEmpty,
+    isEmptyWitness: floatSubtypeIsEmptyWitness
 };

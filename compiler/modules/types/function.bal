@@ -26,16 +26,15 @@ public class FunctionDefinition {
 }
 
 function functionSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
-    return memoSubtypeIsEmpty(cx, cx.functionMemo, functionBddIsEmpty, <Bdd>t);
+    return functionSubtypeIsEmptyWitness(cx, t, new(cx));
 }
 
 function functionSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
-    // TODO:
-    return functionSubtypeIsEmpty(cx, t);
+    return memoSubtypeIsEmpty(cx, cx.functionMemo, functionBddIsEmpty, <Bdd>t, witness);
 }
 
-function functionBddIsEmpty(Context cx, Bdd b) returns boolean {
-    return bddEvery(cx, b, (), (), functionFormulaIsEmpty);
+function functionBddIsEmpty(Context cx, Bdd b, WitnessCollector witness) returns boolean {
+    return bddEvery(cx, b, (), (), functionFormulaIsEmpty, witness);
 }
 
 function functionFormulaIsEmpty(Context cx, Conjunction? pos, Conjunction? neg, WitnessCollector? witness) returns boolean {

@@ -92,7 +92,7 @@ class InitModuleContext {
     }
     
     function llContext() returns llvm:Context => self.llvmContext;
-};
+}
 
 public function buildInitModule(t:Env env, ProgramModule[] modules, map<bir:FunctionSignature> publicFuncs) returns llvm:Module|BuildError {
     llvm:Context llContext = new;

@@ -25,12 +25,6 @@ public type ListSubtypeWitness readonly & record {|
     int fixedLen;
 |};
 
-public type ListSubtypeWitness readonly & record {|
-    SemType[] memberTypes;
-    int[] indices;
-    int fixedLen;
-|};
-
 public function listAtomicTypeMemberAtInner(ListAtomicType atomic, int i) returns SemType {
     return cellInner(listAtomicTypeMemberAt(atomic, i));
 }
@@ -147,20 +141,19 @@ public function tupleTypeWrappedRo(Env env, SemType... members) returns SemType 
 }
 
 function listSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
-    return memoSubtypeIsEmpty(cx, cx.listMemo, listBddIsEmpty, <Bdd>t);
+    return listSubtypeIsEmptyWitness(cx, t, new(cx));
 }
 
 function listSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
-    // TODO:
-    return listSubtypeIsEmpty(cx, t);
+    return memoSubtypeIsEmpty(cx, cx.listMemo, listBddIsEmpty, <Bdd>t, witness);
 }
 
 function listBddIsCyclic(Context cx, Bdd b) returns boolean {
     return memoSubtypeIsCyclic(cx, cx.listMemo, listBddIsEmpty, b);
 }
 
-function listBddIsEmpty(Context cx, Bdd b) returns boolean {
-    return bddEvery(cx, b, (), (), listFormulaIsEmpty);
+function listBddIsEmpty(Context cx, Bdd b, WitnessCollector witness) returns boolean {
+    return bddEvery(cx, b, (), (), listFormulaIsEmpty, witness);
 }
 
 function listFormulaIsEmpty(Context cx, Conjunction? pos, Conjunction? neg, WitnessCollector witness) returns boolean {
@@ -259,6 +252,7 @@ function listIntersectWith(Env env, FixedLengthArray members1, CellSemType rest1
 // `neg` represents N.
 function listInhabited(Context cx, int[] indices, SemType[] memberTypes, int nRequired, Conjunction? neg, int fixedLen, WitnessCollector witness) returns boolean {
     if neg == () {
+        // FIXME:
         witness.remainingSubType({ fixedLen, indices: indices.cloneReadOnly(), memberTypes: memberTypes.cloneReadOnly() });
         return true;
     }
@@ -601,15 +595,7 @@ function nextBoundary(int cur, Range r, int? next) returns int? {
     return next;
 }
 
-final UniformTypeOps listRoOps = {
-    union: bddSubtypeUnion,
-    intersect: bddSubtypeIntersect,
-    diff: bddSubtypeDiff,
-    complement: bddSubtypeComplement,
-    isEmpty: listRoSubtypeIsEmpty
-};
-
-final UniformTypeOps listRwOps = {
+final BasicTypeOps listOps = {
     union: bddSubtypeUnion,
     intersect: bddSubtypeIntersect,
     diff: bddSubtypeDiff,

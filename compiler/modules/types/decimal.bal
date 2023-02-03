@@ -63,9 +63,21 @@ function createDecimalSubtype(boolean allowed, decimal[] values) returns Subtype
     return res;
 }
 
+function decimalSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector w) returns false {
+    if t == true {
+        w.allOfTypes(BT_DECIMAL);
+    }
+    else {
+        w.remainingSubType(<DecimalSubtype>t);
+    }
+    return <false> notIsEmpty(cx, t);
+}
+
+
 final BasicTypeOps decimalOps = {
     union: decimalSubtypeUnion,
     intersect: decimalSubtypeIntersect,
     complement: decimalSubtypeComplement,
-    isEmpty: notIsEmpty
+    isEmpty: notIsEmpty,
+    isEmptyWitness: decimalSubtypeIsEmptyWitness
 };

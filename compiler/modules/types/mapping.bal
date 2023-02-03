@@ -95,19 +95,19 @@ isolated function fieldName(CellField f) returns string {
 }
 
 function mappingSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
-    return memoSubtypeIsEmpty(cx, cx.mappingMemo, mappingBddIsEmpty, <Bdd>t);
+    return mappingSubtypeIsEmptyWitness(cx, t, new(cx));
 }
 
 function mappingSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
-    return mappingSubtypeIsEmpty(cx, t);
+    return memoSubtypeIsEmpty(cx, cx.mappingMemo, mappingBddIsEmpty, <Bdd>t, witness);
 }
 
 function mappingBddIsCyclic(Context cx, Bdd b) returns boolean {
     return memoSubtypeIsCyclic(cx, cx.mappingMemo, mappingBddIsEmpty, b);
 }
 
-function mappingBddIsEmpty(Context cx, Bdd b) returns boolean {
-    return bddEvery(cx, b, (), (), mappingFormulaIsEmpty);
+function mappingBddIsEmpty(Context cx, Bdd b, WitnessCollector witness) returns boolean {
+    return bddEvery(cx, b, (), (), mappingFormulaIsEmpty, witness);
 }
 
 // This works the same as the tuple case, except that instead of
@@ -184,7 +184,7 @@ function mappingInhabited(Context cx, TempMappingSubtype pos, Conjunction? negLi
             CellSemType d = <CellSemType>diff(posType, negType);
              if index1 is () {
                 // We cannot match the rest field of the positive with named field of a negative atom
-                return mappingInhabited(cx, pos, negList.next);
+                return mappingInhabited(cx, pos, negList.next, witness);
             }
             if !isEmpty(cx, d) {
                 TempMappingSubtype mt;

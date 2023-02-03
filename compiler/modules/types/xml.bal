@@ -117,10 +117,11 @@ function xmlSubtypeIsEmpty(Context cx, SubtypeData d) returns boolean {
 }
 
 function xmlBddEmpty(Context cx, Bdd bdd) returns boolean {
-    return bddEvery(cx, bdd, (), (), xmlFormulaIsEmpty);
+    return bddEvery(cx, bdd, (), (), xmlFormulaIsEmpty, new(cx));
 }
 
-function xmlFormulaIsEmpty(Context cx, Conjunction? pos, Conjunction? neg) returns boolean {
+// FIXME:
+function xmlFormulaIsEmpty(Context cx, Conjunction? pos, Conjunction? neg, WitnessCollector witness) returns boolean {
     int allPosBits = xmlCollectAllPrimitives(pos) & XML_PRIMITIVE_ALL_MASK;
     return xmlHasTotalNegative(allPosBits, neg);
 }

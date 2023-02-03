@@ -190,7 +190,7 @@ type MemoEmpty boolean|"loop"|"cyclic"|"provisional"|();
 type BddMemo record {|
     readonly Bdd bdd;
     MemoEmpty empty = ();
-    WitnessValue? witness = ();
+    WitnessValue? witness = "init";
 |};
 
 type BddMemoTable table<BddMemo> key(bdd);
@@ -311,7 +311,7 @@ type BasicTypeOps readonly & record {|
     // Therefore, the complement will not always be a ProperSubtypeData.
     UnaryOp complement = unaryOpPanic;
     UnaryTypeCheckOp isEmpty = unaryTypeCheckOpPanic;
-    UnaryTypeCheckWitnessOp? isEmptyWitness = ();
+    UnaryTypeCheckWitnessOp isEmptyWitness = unaryTypeCheckOpWitnessPanic;
 |};
 
 final readonly & (BasicSubtype[]) EMPTY_SUBTYPES = [];
@@ -836,8 +836,9 @@ public function isEmpty(Context cx, SemType t) returns boolean {
     }
 }
 
+// FIXME: duplicate of isEmpty
 public function isEmptyWitness(Context cx, SemType t, WitnessCollector w) returns boolean {
-    if t is UniformTypeBitSet {
+    if t is BasicTypeBitSet {
         boolean noBits = t == 0;
         if !noBits {
             w.allOfTypes(t);
@@ -846,23 +847,15 @@ public function isEmptyWitness(Context cx, SemType t, WitnessCollector w) return
     }
     else {
         if t.all != 0 {
-            // includes all of one or more uniform types
             w.allOfTypes(t.all);
-            return false;
+            return false;       // includes all of one or more basic types
         }
         foreach var st in unpackComplexSemType(t) {
             var [code, data] = st;
             var isEmptyWitness = ops[code].isEmptyWitness;
-            if isEmptyWitness != () {
-                if !isEmptyWitness(cx, data, w) {
-                    return false;
-                }
-            }
-            var isEmpty = ops[code].isEmpty;
-            if !isEmpty(cx, data) {
+            if !isEmptyWitness(cx, data, w) {
                 return false;
             }
-
         }
         return true;
     }

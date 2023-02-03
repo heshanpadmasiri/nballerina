@@ -144,12 +144,12 @@ function intSubtypeMin(IntSubtype subtype) returns int {
 
 function intSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector w) returns false {
     if t == true {
-        w.allOfTypes(UT_INT);
+        w.allOfTypes(BT_INT);
     }
     else {
         w.remainingSubType(<IntSubtype>t);
     }
-    return false;
+    return <false> notIsEmpty(cx, t);
 }
 
 function rangeListUnion(Range[] v1, Range[] v2) returns Range[] {

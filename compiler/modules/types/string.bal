@@ -183,9 +183,9 @@ function stringSubtypeComplement(SubtypeData d) returns SubtypeData {
     );
 }
 
-function stringSubtypeIsEmpty(Context cx, SubtypeData t, WitnessCollector w) returns false {
+function stringSubtypeIsEmpty(Context cx, SubtypeData t, WitnessCollector w) returns boolean {
     if t == true {
-        w.allOfTypes(UT_STRING);
+        w.allOfTypes(BT_STRING);
     }
     else {
         w.remainingSubType(<StringSubtype>t);

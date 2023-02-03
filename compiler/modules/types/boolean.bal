@@ -49,10 +49,21 @@ function booleanSubtypeComplement(ProperSubtypeData d) returns ProperSubtypeData
     return t;
 }
 
+function booleanSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector w) returns false {
+    if t == true {
+        w.allOfTypes(BT_DECIMAL);
+    }
+    else {
+        w.remainingSubType(<BooleanSubtype>t);
+    }
+    return <false> notIsEmpty(cx, t);
+}
+
 final BasicTypeOps booleanOps = {
     union: booleanSubtypeUnion,
     intersect: booleanSubtypeIntersect,
     diff: booleanSubtypeDiff,
     complement: booleanSubtypeComplement,
-    isEmpty: notIsEmpty
+    isEmpty: notIsEmpty,
+    isEmptyWitness: booleanSubtypeIsEmptyWitness
 };

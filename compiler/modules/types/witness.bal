@@ -1,5 +1,6 @@
 import wso2/nballerina.comm.lib;
 
+// FIXME: remove cell
 public type WitnessableSubtype MappingAtomicType|ListSubtypeWitness|StringSubtype|DecimalSubtype|FloatSubtype|IntSubtype|BooleanSubtype;
 
 public type ListWitnessValue readonly & record {|
@@ -10,7 +11,8 @@ public type ListWitnessValue readonly & record {|
 
 public type WitnessValue WrappedSingleValue|string|map<WitnessValue>|ListWitnessValue?;
 
-final readonly & [UniformTypeBitSet, WrappedSingleValue|string][] uniformTypeSample = [
+final readonly & [BasicTypeBitSet, WrappedSingleValue|string][] basicTypeSample = [
+// FIXME: NEVER is 0 for bit checks here wont work
     [NEVER, "never"],
     [NIL, "()"],
     [BOOLEAN, { value: true }],
@@ -19,16 +21,14 @@ final readonly & [UniformTypeBitSet, WrappedSingleValue|string][] uniformTypeSam
     [DECIMAL, { value: 3.5d }],
     [STRING, { value: "non empty string" }],
     [ERROR, "error"],
-    [LIST_RO, "list"],
-    [LIST_RW, "list"],
-    [MAPPING_RO, "map"],
-    [MAPPING_RW, "map"],
-    [TABLE_RO, "table"],
-    [TABLE_RW, "table"],
+    [LIST, "list"],
+    [MAPPING, "map"],
+    [TABLE, "table"],
     [FUNCTION, "function"],
     [TYPEDESC, "typedesc"],
     [HANDLE, "handle"],
-    [XML, "xml"]
+    [XML, "xml"],
+    [CELL, "cell"]
 ];
 
 public class WitnessCollector {
@@ -36,40 +36,41 @@ public class WitnessCollector {
     private Context cx;
 
     public function init(Context cx) {
+        // io:println("creating witness collector");
         self.cx = cx;
         self.witness = ();
     }
 
     public function remainingSubType(WitnessableSubtype|error subtypeData) {
-        lock {
+        // lock {
             if self.witness == () && subtypeData !is error {
                 self.witness = subtypeToWitnessValue(self.cx, subtypeData);
             }
-        }
+        // }
     }
 
-    public function allOfTypes(UniformTypeBitSet all) {
-        lock {
-            self.witness = uniformTypesToWitnessValue(all);
-        }
+    public function allOfTypes(BasicTypeBitSet all) {
+        // lock {
+            self.witness = basicTypesToWitnessValue(all);
+        // }
     }
 
     public function get() returns WitnessValue {
-        lock {
+        // lock {
             return self.witness;
-        }
+        // }
     } 
 
     public function set(WitnessValue witness) {
-        lock {
+        // lock {
             self.witness = witness;
-        }
+        // }
     }
 }
 
-function uniformTypesToWitnessValue(UniformTypeBitSet bitset) returns WrappedSingleValue|string? {
-    foreach var [ut, sample] in uniformTypeSample {
-        if (ut & bitset) != 0 {
+function basicTypesToWitnessValue(BasicTypeBitSet bitset) returns WrappedSingleValue|string? {
+    foreach var [bt, sample] in basicTypeSample {
+        if (bt & bitset) != 0 {
             return sample;
         }
     }
@@ -77,25 +78,28 @@ function uniformTypesToWitnessValue(UniformTypeBitSet bitset) returns WrappedSin
 }
 
 function semTypeToWitnessValue(Context cx, SemType t) returns WitnessValue {
-    if t is UniformTypeBitSet {
-        return uniformTypesToWitnessValue(t);
+    if t is BasicTypeBitSet {
+        return basicTypesToWitnessValue(t);
     }
+    // else if t is CellSemType {
+    //     return cellSemTypeToWitness(cx, t);
+    // }
     else {
         if t.all != 0 {
-            return uniformTypesToWitnessValue(t.all);
+            return basicTypesToWitnessValue(t.all);
         }
-        foreach var [code, _] in uniformTypeSample {
+        foreach var [code, _] in basicTypeSample {
             if (code & t.some) != 0 {
-                UniformTypeCode? utCode = uniformTypeCode(code);
-                if utCode == () {
+                BasicTypeCode? btCode = basicTypeCode(widenToBasicTypes(code));
+                if btCode == () {
                     continue;
                 }
-                SubtypeData subtypeData = getComplexSubtypeData(t, utCode);
+                SubtypeData subtypeData = getComplexSubtypeData(t, btCode);
                 if subtypeData is WitnessableSubtype {
                     return subtypeToWitnessValue(cx, subtypeData);
                 }
                 else if subtypeData is BddNode {
-                    return bddToWitness(cx, utCode, subtypeData);
+                    return bddToWitness(cx, btCode, subtypeData);
                 }
                 else {
                     return "[Unsupported witness shape]";
@@ -105,6 +109,38 @@ function semTypeToWitnessValue(Context cx, SemType t) returns WitnessValue {
         return ();
     }
 }
+
+// function cellSemTypeToWitness(Context cx, CellSemType t) returns WitnessValue {
+//     if cellAtomicType(t) != () {
+//         return semTypeToWitnessValue(cx, cellInner(t));
+//     }
+//     WitnessCollector tmpWitness = new(cx);
+//     var _ = isEmptyWitness(cx, t, tmpWitness);
+//     return tmpWitness.get();
+//     // FIXME: this is wrong (but good enough for passing tests)
+//     // var bdd = t.subtypeDataList[0]; 
+//     // if bdd !is BddNode {
+//     //     return "[Cell unexpected subtype: " + bdd.toString() + "]";
+//     // }
+//     // var typeAtom = (<BddNode>bdd.right).atom;
+//     // if typeAtom !is TypeAtom {
+//     //     return "[Cell unexpected recAtom: " + typeAtom.toString() + "]";
+//     // }
+//     // var atomicType = typeAtom.atomicType;
+//     // if atomicType is ListAtomicType {
+//     //     if cx.listMemo.hasKey(bdd) {
+//     //         return cx.listMemo.get(bdd).witness;
+//     //     }
+//     //     return "[Cell unknown list Atom: " + bdd.toString() + "]";
+//     // }
+//     // else if atomicType is MappingAtomicType {
+//     //     if cx.mappingMemo.hasKey(bdd) {
+//     //         return cx.mappingMemo.get(bdd).witness;
+//     //     }
+//     //     return "[Cell unknown mapping Atom: " + bdd.toString() + "]";
+//     // }
+//     // return semTypeToWitnessValue(cx, (<CellAtomicType>atomicType).ty);
+// }
 
 function subtypeToWitnessValue(Context cx, WitnessableSubtype subtype) returns WitnessValue {
     if subtype is MappingAtomicType {
@@ -125,17 +161,26 @@ function subtypeToWitnessValue(Context cx, WitnessableSubtype subtype) returns W
     else if subtype is ListSubtypeWitness {
         return createListWitness(cx, subtype);
     }
+    // else if subtype is CellAtomicType {
+    //     return createCellWitness(cx, subtype);
+    // }
     else {
         return createIntWitness(subtype);
     }
 }
 
-function bddToWitness(Context cx, UniformTypeCode typeCode, BddNode bdd) returns WitnessValue {
+function bddToWitness(Context cx, BasicTypeCode typeCode, BddNode bdd) returns WitnessValue {
+    if typeCode == BT_CELL {
+        WitnessCollector innerWitness = new(cx);
+        _ = cellSubtypeIsEmptyWitness(cx, bdd, innerWitness);
+        // return string `[cell bdd ${bdd.toString()} -> ${innerWitness.get().toString()}]`;
+        return innerWitness.get();
+    }
     BddMemo? m = ();
-    if typeCode is UT_LIST_RO || typeCode is UT_LIST_RW {
+    if typeCode == BT_LIST {
         m = cx.listMemo[bdd];
     }
-    else if typeCode is UT_MAPPING_RO || typeCode is UT_MAPPING_RW {
+    else if typeCode == BT_MAPPING {
         m = cx.mappingMemo[bdd];
     }
     return m != () ? m.witness : ();
@@ -144,16 +189,23 @@ function bddToWitness(Context cx, UniformTypeCode typeCode, BddNode bdd) returns
 function createMappingWitness(Context cx, MappingAtomicType subtype) returns WitnessValue {
     map<WitnessValue> witness = {};
     foreach int i in 0 ..< subtype.names.length() {
+        // TODO: handle never correctly (we can use cell inner with never)
         witness[subtype.names[i]] = semTypeToWitnessValue(cx, subtype.types[i]);
     }
-    if !isNever(subtype.rest) {
+    if cellInnerVal(subtype.rest) != NEVER {
         witness["..."] = semTypeToWitnessValue(cx, subtype.rest);
     }
     return witness;
 }
 
+// FIXME:
 function createListWitness(Context cx, ListSubtypeWitness listWitnessType) returns ListWitnessValue {
     var { memberTypes, indices, fixedLen } = listWitnessType;
+    foreach var each in memberTypes {
+        if each !is CellSemType {
+            panic error("unexpected");
+        }
+    }
     WitnessValue[] memberValues = from var m in memberTypes select semTypeToWitnessValue(cx, m);
     return { memberValues: memberValues.cloneReadOnly(), indices, fixedLen };
 }
@@ -228,6 +280,7 @@ function createFloatWitness(FloatSubtype subtype) returns WrappedSingleValue {
         }
     }
 }
+
 
 function createIntWitness(IntSubtype subtype) returns WrappedSingleValue {
     return { value: subtype[0].min };

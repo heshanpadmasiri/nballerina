@@ -19,10 +19,15 @@ public function cellContaining(Env env, SemType ty, CellMutability mut = CELL_MU
 }
 
 function cellSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
-    return bddEvery(cx, <Bdd>t, (), (), cellFormulaIsEmpty);
+    return bddEvery(cx, <Bdd>t, (), (), cellFormulaIsEmpty, new(cx));
 }
 
-function cellFormulaIsEmpty(Context cx, Conjunction? posList, Conjunction? negList) returns boolean {
+function cellSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
+    return bddEvery(cx, <Bdd>t, (), (), cellFormulaIsEmpty, witness);
+}
+
+// TODO: change to work with witness
+function cellFormulaIsEmpty(Context cx, Conjunction? posList, Conjunction? negList, WitnessCollector witness) returns boolean {
     CellAtomicType combined;
     if posList == () {
         combined = { ty: VAL, mut: CELL_MUT_UNLIMITED };
@@ -38,32 +43,32 @@ function cellFormulaIsEmpty(Context cx, Conjunction? posList, Conjunction? negLi
             p = p.next;
         }
     }
-    return !cellInhabited(cx, combined, negList);
+    return !cellInhabited(cx, combined, negList, witness);
 }
 
-function cellInhabited(Context cx, CellAtomicType posCell, Conjunction? negList) returns boolean {
+function cellInhabited(Context cx, CellAtomicType posCell, Conjunction? negList, WitnessCollector witness) returns boolean {
     SemType pos = posCell.ty;
     if isEmpty(cx, pos) {
         return false;
     }
     match posCell.mut {
         CELL_MUT_NONE => {
-            return cellMutNoneInhabited(cx, pos, negList);
+            return cellMutNoneInhabited(cx, pos, negList, witness);
         }
         CELL_MUT_LIMITED => {
-            return cellMutLimitedInhabited(cx, pos, negList);
+            return cellMutLimitedInhabited(cx, pos, negList, witness);
         }
         CELL_MUT_UNLIMITED|_ => {
-            return cellMutUnlimitedInhabited(cx, pos, negList);
+            return cellMutUnlimitedInhabited(cx, pos, negList, witness);
         }
     }
 }
 
-function cellMutNoneInhabited(Context cx, SemType pos, Conjunction? negList) returns boolean {
+function cellMutNoneInhabited(Context cx, SemType pos, Conjunction? negList, WitnessCollector witness) returns boolean {
     SemType negListUnionResult = cellNegListUnion(negList);
     // We expect `isNever` condition to be `true` when there are no negative atoms.
     // Otherwise, we do `isEmpty` to conclude on the inhabitance.
-    return negListUnionResult == NEVER || !isEmpty(cx, diff(pos, negListUnionResult));
+    return negListUnionResult == NEVER || !isEmptyWitness(cx, diff(pos, negListUnionResult), witness);
 }
 
 function cellNegListUnion(Conjunction? negList) returns SemType {
@@ -79,18 +84,20 @@ function cellNegListUnion(Conjunction? negList) returns SemType {
     return negUnion;
 }
 
-function cellMutLimitedInhabited(Context cx, SemType pos, Conjunction? negList) returns boolean {
+function cellMutLimitedInhabited(Context cx, SemType pos, Conjunction? negList, WitnessCollector witness) returns boolean {
     if negList == () {
+        // FIXME:
+        witness.set(semTypeToWitnessValue(cx, pos));
         return true;
     }
     CellAtomicType negAtomicCell = cellAtomType(negList.atom);
     if negAtomicCell.mut >= CELL_MUT_LIMITED && isEmpty(cx, diff(pos, negAtomicCell.ty)) {
         return false;
     }
-    return cellMutLimitedInhabited(cx, pos, negList.next);
+    return cellMutLimitedInhabited(cx, pos, negList.next, witness);
 }
 
-function cellMutUnlimitedInhabited(Context cx, SemType pos, Conjunction? negList) returns boolean {
+function cellMutUnlimitedInhabited(Context cx, SemType pos, Conjunction? negList, WitnessCollector witness) returns boolean {
     Conjunction? neg = negList;
     while true {
         if neg == () {
@@ -104,7 +111,7 @@ function cellMutUnlimitedInhabited(Context cx, SemType pos, Conjunction? negList
     SemType negListUnionResult = cellNegListUnlimitedUnion(negList);
     // We expect `isNever` condition to be `true` when there are no negative atoms with unlimited mutability.
     // Otherwise, we do `isEmpty` to conclude on the inhabitance.
-    return negListUnionResult == NEVER || !isEmpty(cx, diff(pos, negListUnionResult));
+    return negListUnionResult == NEVER || !isEmptyWitness(cx, diff(pos, negListUnionResult), witness);
 }
 
 function cellNegListUnlimitedUnion(Conjunction? negList) returns SemType {
@@ -164,5 +171,6 @@ final BasicTypeOps cellOps = {
     intersect: cellSubtypeIntersect,
     diff: cellSubtypeDiff,
     complement: cellSubtypeComplement,
-    isEmpty: cellSubtypeIsEmpty
+    isEmpty: cellSubtypeIsEmpty,
+    isEmptyWitness: cellSubtypeIsEmptyWitness
 };

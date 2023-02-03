@@ -28,21 +28,20 @@ function errorSubtypeComplement(ProperSubtypeData t) returns SubtypeData {
 }
 
 function errorSubtypeIsEmpty(Context cx, SubtypeData t) returns boolean {
+    return errorSubtypeIsEmptyWitness(cx, t, new(cx));
+}
+
+function errorSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
     Bdd b = <Bdd>t;
     // The goal of this is to ensure that mappingFormulaIsEmpty call in errorBddIsEmpty beneath
     // does not get an empty posList, because it will interpret that
     // as `map<any|error>` rather than `readonly & map<readonly>`.
     b = bddPosMaybeEmpty(b) ? bddIntersect(b, MAPPING_SUBTYPE_RO) : b;
-    return memoSubtypeIsEmpty(cx, cx.mappingMemo, errorBddIsEmpty, b);
+    return memoSubtypeIsEmpty(cx, cx.mappingMemo, errorBddIsEmpty, b, witness);
 }
 
-function errorSubtypeIsEmptyWitness(Context cx, SubtypeData t, WitnessCollector witness) returns boolean {
-    //TODO:
-    return errorSubtypeIsEmpty(cx, t);
-}
-
-function errorBddIsEmpty(Context cx, Bdd b) returns boolean {
-    return bddEveryPositive(cx, b, (), (), mappingFormulaIsEmpty);
+function errorBddIsEmpty(Context cx, Bdd b, WitnessCollector witness) returns boolean {
+    return bddEveryPositive(cx, b, (), (), mappingFormulaIsEmpty, witness);
 }
 
 final BasicTypeOps errorOps = {
@@ -50,5 +49,6 @@ final BasicTypeOps errorOps = {
     intersect: bddSubtypeIntersect,
     diff: bddSubtypeDiff,
     complement: bddSubtypeComplement,
-    isEmpty: errorSubtypeIsEmpty
+    isEmpty: errorSubtypeIsEmpty,
+    isEmptyWitness: errorSubtypeIsEmptyWitness
 };
