@@ -49,6 +49,17 @@ type FillerDescDefn record {|
     readonly llvm:ConstPointerValue defn;
 |};
 
+// These are approximate types
+final llvm:FunctionType LLVM_CALL_UNIFORM_FUNC_TY = llvm:functionType("void", [llvm:pointerType(LLVM_TAGGED_PTR),
+                                                                               "i64",
+                                                                               llvm:pointerType(llvm:functionType("void", [])),
+                                                                               llvm:pointerType(LLVM_TAGGED_PTR)]);
+final llvm:StructType LLVM_FUNCTION_SIGNATURE = llvm:structType([llvm:pointerType(LLVM_CALL_UNIFORM_FUNC_TY),
+                                                                 LLVM_MEMBER_TYPE,
+                                                                 LLVM_MEMBER_TYPE,
+                                                                 LLVM_INT,
+                                                                 llvm:pointerType(LLVM_MEMBER_TYPE)]);
+
 const TYPE_KIND_ARRAY = "array";
 const TYPE_KIND_MAP = "map";
 const TYPE_KIND_RECORD = "record";
@@ -59,6 +70,7 @@ const TYPE_KIND_INT = "int";
 const TYPE_KIND_FLOAT = "float";
 const TYPE_KIND_DECIMAL = "decimal";
 const TYPE_KIND_STRING = "string";
+const TYPE_KIND_FUNCTION = "function";
 
 const STRUCTURE_LIST = 0;
 const STRUCTURE_MAPPING = 1;
@@ -67,7 +79,7 @@ type StructureBasicType STRUCTURE_LIST|STRUCTURE_MAPPING;
 
 type TypeKindArrayOrMap TYPE_KIND_ARRAY|TYPE_KIND_MAP;
 type TypeKindSimple TYPE_KIND_TRUE|TYPE_KIND_FALSE|TYPE_KIND_INT|TYPE_KIND_FLOAT|TYPE_KIND_DECIMAL;
-type TypeKind TypeKindArrayOrMap|TYPE_KIND_RECORD|TYPE_KIND_PRECOMPUTED|TYPE_KIND_STRING|TypeKindSimple;
+type TypeKind TypeKindArrayOrMap|TYPE_KIND_RECORD|TYPE_KIND_PRECOMPUTED|TYPE_KIND_STRING|TYPE_KIND_FUNCTION|TypeKindSimple;
 
 type FunctionRef llvm:FunctionDecl|llvm:ConstPointerValue;
 
@@ -76,7 +88,7 @@ class InitModuleContext {
     private llvm:Context llvmContext;
     llvm:Module llMod;
     t:Context tc;
-    table<InherentTypeDefn> key(semType)[2] inherentTypeDefns = [table [], table[]];
+    table<InherentTypeDefn> key(semType)[3] inherentTypeDefns = [table [], table[], table[]];
     table<ComplexTypeDefn> key(semType) complexTypeDefns = table [];
     table<SubtypeDefn> key(typeCode, semType) subtypeDefns = table [];
     InitTypes llTypes;
@@ -150,6 +162,138 @@ function buildInitTypes(llvm:Context llContext, llvm:Module llMod, t:Env env, Pr
     finishSubtypeDefns(cx);
     buildInitTypesForUsage(cx, modules, USED_EXACTIFY);
     buildInitTypesForUsage(cx, modules, USED_TYPE_TEST);
+}
+
+function buildFunctionSignatures(InitModuleContext cx, ProgramModule[] modules, llvm:Builder builder) {
+    foreach var mod in modules {
+        foreach var usage in mod.functionUsage.usage {
+            var [signature, id] = usage;
+            buildFunctionSignatureDefn(cx, mangleFunctionSignatureSymbol(mod.id, id), signature, builder, mod);
+        }
+    }
+}
+
+function buildFunctionSignatureDefn(InitModuleContext cx, string symbol, t:FunctionSignature signature,
+                                    llvm:Builder builder, ProgramModule mod) {
+    FunctionSignatureDefn? existingSignature = cx.functionSignatureDefns[signature];
+    if existingSignature != () {
+        _ = cx.llMod.addAlias(createFunctionSignatureType(signature), existingSignature.llSignature, symbol);
+    }
+    else {
+        llvm:Function uniformCallFunc = buildUniformCallFunction(cx, signature, builder, symbol + "_uniform_call", mod);
+        llvm:ConstValue returnTy = getMemberType(cx, signature.returnType);
+        t:SemType? restParamType = signature.restParamType;
+        llvm:ConstValue restParamTy = restParamType == () ? getMemberType(cx, t:NEVER) : getMemberType(cx, restParamType);
+        int requiredParamCount = restParamType == () ? signature.paramTypes.length() : signature.paramTypes.length() - 1;
+        llvm:ConstValue nParams = constInt(cx, requiredParamCount);
+        llvm:ConstValue paramTys = cx.llContext().constArray(LLVM_MEMBER_TYPE,
+                                                             from int i in 0 ..< requiredParamCount select getMemberType(cx, signature.paramTypes[i]));
+        llvm:ConstValue init = cx.llContext().constStruct([uniformCallFunc, returnTy, restParamTy, nParams, paramTys]);
+        llvm:ConstPointerValue llSignature = cx.llMod.addGlobal(createFunctionSignatureType(signature), symbol, initializer=init);
+        cx.functionSignatureDefns.add({ signature, llSignature });
+    }
+}
+
+function createFunctionSignatureType(t:FunctionSignature signature) returns llvm:StructType {
+    int requiredParamCount = signature.restParamType == () ? signature.paramTypes.length() : signature.paramTypes.length() - 1;
+    return llvm:structType([
+        llvm:pointerType(LLVM_CALL_UNIFORM_FUNC_TY),
+        LLVM_MEMBER_TYPE,
+        LLVM_MEMBER_TYPE,
+        LLVM_INT,
+        llvm:arrayType(LLVM_MEMBER_TYPE, requiredParamCount)
+    ]);
+}
+
+function buildUniformCallFunction(InitModuleContext cx, t:FunctionSignature signature, llvm:Builder builder,
+                                  string name, ProgramModule mod) returns llvm:Function {
+    llvm:FunctionDefn func = cx.llMod.addFunctionDefn(name, LLVM_CALL_UNIFORM_FUNC_TY);
+    llvm:BasicBlock bb = func.appendBasicBlock();
+    builder.positionAtEnd(bb);
+    llvm:PointerValue[] exactArgs = from t:SemType paramType in signature.paramTypes select 
+                                        builder.alloca(exactArgTransformerResultTy(paramType));
+    llvm:PointerValue uniformArgArray = <llvm:PointerValue>func.getParam(0);
+    int fixedArgCount = signature.restParamType == () ? signature.paramTypes.length() :
+                                                        signature.paramTypes.length() - 1;
+    foreach int i in 0 ..< fixedArgCount {
+        ExactArgTransformerFn transformFn = exactArgTransformerFn(signature.paramTypes[i]);
+        llvm:PointerValue uniformArg = <llvm:PointerValue>builder.load(builder.getElementPtr(uniformArgArray, 
+                                                                                            [constIndex(cx, i)]));
+        llvm:Value arg = transformFn(builder, cx, uniformArg);
+        builder.store(arg, exactArgs[i]);
+    }
+    if signature.restParamType != () {
+        llvm:PointerValue restArgArrayPtr = exactArgs[fixedArgCount];
+        builder.store(buildRestArgList(cx, builder, signature.paramTypes[fixedArgCount], mod), restArgArrayPtr);
+        llvm:Value startingOffset = constInt(cx, fixedArgCount);
+        llvm:Value nArgs = builder.iArithmeticWrap("sub", func.getParam(1), startingOffset);
+        buildVoidRuntimeFunctionCall(builder, cx, addUniformArgsToRestArray, [uniformArgArray,
+                                                                              nArgs,
+                                                                              startingOffset,
+                                                                              builder.load(restArgArrayPtr)]);
+    }
+    llvm:FunctionType fnTy = buildFunctionSignature(signature);
+    llvm:PointerValue fnPtr = builder.bitCast(<llvm:PointerValue>func.getParam(2), llvm:pointerType(fnTy));
+    llvm:Value[] args = from var each in exactArgs select builder.load(each);
+    llvm:Value? retValue = builder.call(fnPtr, args);
+    if retValue !is () {
+        llvm:PointerValue returnRegister = builder.bitCast(<llvm:PointerValue>func.getParam(3), llvm:pointerType(<llvm:Type>fnTy.returnType));
+        builder.store(retValue, returnRegister);
+    }
+    builder.ret();
+    return func;
+}
+
+// TODO: better name for these (instead of transformers)
+type ExactArgTransformerFn function(llvm:Builder builder, Scaffold|InitModuleContext context,
+                                    llvm:PointerValue arg) returns llvm:Value;
+
+type ExactArgTransformer readonly & record {|
+    readonly ExactArgTransformerFn fn;
+    readonly llvm:SingleValueType resultType;
+|};
+
+// FIXME: can't return a data structure with both function ptr and return type
+function exactArgTransformerFn(t:SemType ty) returns ExactArgTransformerFn {
+    t:BasicTypeBitSet w = t:widenToBasicTypes(ty);
+    if t:isSubtypeSimple(w, t:INT) {
+        return buildUntagInt;
+    }
+    else if t:isSubtypeSimple(ty, t:FLOAT) {
+        return buildUntagFloat;
+    }
+    else if t:isSubtypeSimple(ty, t:BOOLEAN) {
+        return (builder, context, arg) => buildUntagBoolean(builder, arg);
+    }
+    else {
+        return (builder, context, arg) => arg;
+    }
+}
+
+function exactArgTransformerResultTy(t:SemType ty) returns llvm:SingleValueType {
+    t:BasicTypeBitSet w = t:widenToBasicTypes(ty);
+    if t:isSubtypeSimple(w, t:INT) {
+        return LLVM_INT;
+    }
+    else if t:isSubtypeSimple(ty, t:FLOAT) {
+        return LLVM_FLOAT;
+    }
+    else if t:isSubtypeSimple(ty, t:BOOLEAN) {
+        return LLVM_BOOLEAN;
+    }
+    else {
+        return LLVM_TAGGED_PTR;
+    }
+}
+
+function buildRestArgList(InitModuleContext cx, llvm:Builder builder, t:SemType listTy,
+                          ProgramModule mod) returns llvm:PointerValue {
+    t:ListAtomicType atomic = <t:ListAtomicType>t:listAtomicType(cx.tc, listTy);
+    ListRepr repr = listAtomicTypeToSpecializedListRepr(atomic) ?: GENERIC_LIST_REPR;
+    llvm:ConstPointerValue inherentType = getListInherentTypeSymbol(cx, listTy, mod);
+    llvm:PointerValue struct = <llvm:PointerValue>buildRuntimeFunctionCall(builder, cx, repr.construct,
+                                                                           [inherentType, constInt(cx, 0)]);
+    return builder.getElementPtr(builder.bitCast(struct, LLVM_TAGGED_PTR), [constInt(cx, TAG_LIST|FLAG_EXACT)]);
 }
 
 function buildInitTypesForUsage(InitModuleContext cx, ProgramModule[] modules, TypeHowUsed howUsed) {
@@ -524,8 +668,24 @@ function createSubtypeStruct(InitModuleContext cx, t:BasicTypeCode typeCode, t:C
         t:BT_MAPPING => {
             return createMappingSubtypeStruct(cx, semType); 
         }
+        t:BT_FUNCTION => {
+            return createFunctionSubtypeStruct(cx, semType);
+        }
     }
     panic err:impossible(`subtypes of uniform type ${typeCode} are not implemented`);    
+}
+
+function createFunctionSubtypeStruct(InitModuleContext cx, t:ComplexSemType semType) returns SubtypeStruct {
+    // FIXME:
+    // t:FunctionAtomicType atomic = <t:FunctionAtomicType>t:functionAtomicType(cx.tc, semType);
+    // t:FunctionSignature signature = t:functionSignature(cx.tc, atomic);
+    // t:SemType? restParamType = signature.restParamType;
+    // t:BasicTypeBitSet
+    return {
+        types: [cx.llTypes.subtypeContainsFunctionPtr],
+        values: [getSubtypeContainsFunc(cx, "function")]
+    };
+    // return createPrecomputedSubtypeStruct(cx, STRUCTURE_FUNCTION, semType);
 }
 
 function createBooleanSubtypeStruct(InitModuleContext cx, t:ComplexSemType semType) returns SubtypeStruct {

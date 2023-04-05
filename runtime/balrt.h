@@ -312,6 +312,14 @@ typedef struct {
 } *StringSubtypePtr;
 
 typedef struct {
+    UniformSubtype uniform;
+    uint32_t returnBitSet;
+    uint32_t restBitSet;
+    int64_t nParams;
+    uint32_t paramBitSets[];
+} *FunctionSubtypePtr;
+
+typedef struct {
    uint32_t all;
    uint32_t some;
    UniformSubtypePtr subtypes[];
@@ -346,7 +354,19 @@ typedef GC struct LargeString {
     char bytes[];
 } *LargeStringPtr;
 
-typedef void(*FunctionPtr)();
+typedef void (*FunctionPtr)();
+// result type is an approximation
+typedef void (*UniformCallFunction)(TaggedPtr uniformArgs, int64_t nArgs, FunctionPtr funcPtr, TaggedPtr *result);
+
+// TODO: properly represent rest
+typedef struct FunctionSignature {
+    UniformCallFunction uniformCallFunction;
+    MemberType returnTy;
+    MemberType restTy;
+    int64_t nParams;
+    MemberType paramTys[];
+} *FunctionSignaturePtr;
+
 typedef GC struct FunctionValue {
     FunctionPtr funcPtr;
 } *FunctionValuePtr;

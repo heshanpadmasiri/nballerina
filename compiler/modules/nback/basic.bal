@@ -243,7 +243,7 @@ function buildCallIndirect(llvm:Builder builder, Scaffold scaffold, bir:CallIndi
     llvm:PointerValue fnGlobalPtr = builder.getElementPtr(fnStructPtr, [constIndex(scaffold, 0), constIndex(scaffold, 0)], "inbounds");
     llvm:PointerValue funcPtr = <llvm:PointerValue>builder.load(fnGlobalPtr);
     llvm:Value? retValue = buildFunctionCall(builder, scaffold, funcPtr, args);
-    RetRepr retRepr = semTypeRetRepr(signature.returnType);
+    RetRepr retRepr = semTypeRetRepr(returnType);
     buildStoreRet(builder, scaffold, retRepr, retValue, insn.result);
 }
 
