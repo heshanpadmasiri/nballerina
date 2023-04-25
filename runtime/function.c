@@ -7,11 +7,32 @@ void _bal_debug_ptr(TaggedPtr p) {
     printf("debug_pointer: %p\n", p);
 }
 
-// FIXME: we don't have a test case that actually calls this function?
 bool _bal_function_subtype_contains(UniformSubtypePtr stp, TaggedPtr p) {
-    // FIXME:
-    printf("function subtype contains called /n");
-    return false;
+    if ((getTag(p) & UT_MASK) != TAG_FUNCTION) {
+        return false;
+    }
+    FunctionValuePtr valPtr = taggedToPtr(p);
+    FunctionSignaturePtr signaturePtr = valPtr->signature;
+    MemberType actualReturnTy = signaturePtr->returnTy;
+    FunctionSubtypePtr fstp = (FunctionSubtypePtr)stp;
+    if (!memberTypeIsSubtypeSimple(actualReturnTy, fstp->returnBitSet)) {
+        return false;
+    }
+    int64_t nParams = signaturePtr->nParams;
+    for (int64_t i = 0; i < nParams; i++) {
+        MemberType paramTy = signaturePtr->paramTys[i];
+        uint32_t paramBitSet;
+        if (i > fstp->nParams) {
+            paramBitSet = fstp->restBitSet;
+        }
+        else {
+            paramBitSet = fstp->paramBitSets[i];
+        }
+        if (!memberTypeIsSubtypeSimple(paramTy, paramBitSet)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // TODO: separate out inline functions like isExact

@@ -54,7 +54,8 @@ final llvm:FunctionType LLVM_CALL_UNIFORM_FUNC_TY = llvm:functionType("void", [l
                                                                                "i64",
                                                                                llvm:pointerType(llvm:functionType("void", [])),
                                                                                llvm:pointerType(LLVM_TAGGED_PTR)]);
-final llvm:StructType LLVM_FUNCTION_SIGNATURE = llvm:structType([llvm:pointerType(LLVM_CALL_UNIFORM_FUNC_TY),
+final llvm:StructType LLVM_FUNCTION_SIGNATURE = llvm:structType([LLVM_TID,
+                                                                 llvm:pointerType(LLVM_CALL_UNIFORM_FUNC_TY),
                                                                  LLVM_MEMBER_TYPE,
                                                                  LLVM_MEMBER_TYPE,
                                                                  LLVM_INT,
@@ -72,10 +73,12 @@ const TYPE_KIND_DECIMAL = "decimal";
 const TYPE_KIND_STRING = "string";
 const TYPE_KIND_FUNCTION = "function";
 
+// TODO: need a better names (these are the types that can uses precomputed subtypes)
 const STRUCTURE_LIST = 0;
 const STRUCTURE_MAPPING = 1;
+const STRUCTURE_FUNCTION = 2;
 
-type StructureBasicType STRUCTURE_LIST|STRUCTURE_MAPPING;
+type StructureBasicType STRUCTURE_LIST|STRUCTURE_MAPPING|STRUCTURE_FUNCTION;
 
 type TypeKindArrayOrMap TYPE_KIND_ARRAY|TYPE_KIND_MAP;
 type TypeKindSimple TYPE_KIND_TRUE|TYPE_KIND_FALSE|TYPE_KIND_INT|TYPE_KIND_FLOAT|TYPE_KIND_DECIMAL;
@@ -188,7 +191,8 @@ function buildFunctionSignatureDefn(InitModuleContext cx, string symbol, t:Funct
         llvm:ConstValue nParams = constInt(cx, requiredParamCount);
         llvm:ConstValue paramTys = cx.llContext().constArray(LLVM_MEMBER_TYPE,
                                                              from int i in 0 ..< requiredParamCount select getMemberType(cx, signature.paramTypes[i]));
-        llvm:ConstValue init = cx.llContext().constStruct([uniformCallFunc, returnTy, restParamTy, nParams, paramTys]);
+        llvm:ConstValue tid = constTid(cx, cx.inherentTypeDefns[STRUCTURE_FUNCTION].get(t:functionSemType(cx.tc, signature)).tid);
+        llvm:ConstValue init = cx.llContext().constStruct([tid, uniformCallFunc, returnTy, restParamTy, nParams, paramTys]);
         llvm:ConstPointerValue llSignature = cx.llMod.addGlobal(createFunctionSignatureType(signature), symbol, initializer=init);
         cx.functionSignatureDefns.add({ signature, llSignature });
     }
@@ -197,6 +201,7 @@ function buildFunctionSignatureDefn(InitModuleContext cx, string symbol, t:Funct
 function createFunctionSignatureType(t:FunctionSignature signature) returns llvm:StructType {
     int requiredParamCount = signature.restParamType == () ? signature.paramTypes.length() : signature.paramTypes.length() - 1;
     return llvm:structType([
+        LLVM_TID,
         llvm:pointerType(LLVM_CALL_UNIFORM_FUNC_TY),
         LLVM_MEMBER_TYPE,
         LLVM_MEMBER_TYPE,
@@ -336,8 +341,11 @@ function addInherentTypeDefn(InitModuleContext cx, string symbol, t:SemType semT
     if basic == STRUCTURE_LIST {
         llType = createListDescType(cx.tc, semType);        
     }
-    else {
+    else if basic == STRUCTURE_MAPPING {
         llType = createMappingDescType(cx.tc, semType);        
+    }
+    else {
+        llType = llStructureDescType;
     }
     // The initializer is set later, because of the possibility of
     // recursion via `getFillerDesc`.
@@ -347,8 +355,12 @@ function addInherentTypeDefn(InitModuleContext cx, string symbol, t:SemType semT
     if basic == STRUCTURE_LIST {
         initValue = createListDescInit(cx, tid, semType);
     }
-    else {
+    else if basic == STRUCTURE_MAPPING {
         initValue = createMappingDescInit(cx, tid, semType);
+    }
+    else {
+        // FIXME: I don't think this value is used ever
+        initValue = cx.llContext().constStruct([constTid(cx, tid)]);
     }
     cx.llMod.setInitializer(ptr, initValue);
     return ptr;
@@ -676,16 +688,34 @@ function createSubtypeStruct(InitModuleContext cx, t:BasicTypeCode typeCode, t:C
 }
 
 function createFunctionSubtypeStruct(InitModuleContext cx, t:ComplexSemType semType) returns SubtypeStruct {
-    // FIXME:
-    // t:FunctionAtomicType atomic = <t:FunctionAtomicType>t:functionAtomicType(cx.tc, semType);
-    // t:FunctionSignature signature = t:functionSignature(cx.tc, atomic);
-    // t:SemType? restParamType = signature.restParamType;
-    // t:BasicTypeBitSet
+    t:FunctionAtomicType atomic = <t:FunctionAtomicType>t:functionAtomicType(cx.tc, semType);
+    var { returnType, paramTypes, restParamType } = t:functionSignature(cx.tc, atomic);
+    // JBUG: can't destructure the paramTypes (get's null when [])?
+    t:BasicTypeBitSet? returnBitSet = returnType is t:BasicTypeBitSet ? returnType : ();
+    t:BasicTypeBitSet? restBitSet = restParamType is t:BasicTypeBitSet ? restParamType : ();
+    if returnBitSet == () || restBitSet == () {
+        return createPrecomputedSubtypeStruct(cx, STRUCTURE_FUNCTION, semType);
+    }
+    int nParams = restParamType == () ? paramTypes.length() : paramTypes.length() - 1;
+    t:BasicTypeBitSet[] paramBitSets = [];
+    foreach int i in 0..< nParams {
+        t:SemType paramTy =paramTypes[i];
+        if paramTy is t:BasicTypeBitSet {
+            paramBitSets.push(paramTy);
+        }
+        else {
+            return createPrecomputedSubtypeStruct(cx, STRUCTURE_FUNCTION, semType);
+        }
+    }
+    llvm:ConstValue paramBitSetArray = cx.llContext().constArray(LLVM_BITSET, from t:BasicTypeBitSet b in paramBitSets select constBitset(cx, b));
     return {
-        types: [cx.llTypes.subtypeContainsFunctionPtr],
-        values: [getSubtypeContainsFunc(cx, "function")]
+        types: [cx.llTypes.subtypeContainsFunctionPtr, LLVM_BITSET, LLVM_BITSET, LLVM_INT, llvm:arrayType(LLVM_BITSET, nParams)],
+        values: [getSubtypeContainsFunc(cx, "function"),
+                 constBitset(cx, returnBitSet),
+                 constBitset(cx, restBitSet),
+                 constInt(cx, nParams),
+                 paramBitSetArray]
     };
-    // return createPrecomputedSubtypeStruct(cx, STRUCTURE_FUNCTION, semType);
 }
 
 function createBooleanSubtypeStruct(InitModuleContext cx, t:ComplexSemType semType) returns SubtypeStruct {
@@ -881,6 +911,9 @@ function structureBasicType(t:SemType semType) returns StructureBasicType? {
     }
     if t:isSubtypeSimple(semType, t:MAPPING) {
         return STRUCTURE_MAPPING;
+    }
+    if t:isSubtypeSimple(semType, t:FUNCTION) {
+        return STRUCTURE_FUNCTION;
     }
     return ();
 }

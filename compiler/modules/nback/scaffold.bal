@@ -266,6 +266,19 @@ class Scaffold {
         return value;
     }
 
+    function getFunctionSignatureValue(t:FunctionSignature signature) returns llvm:ConstPointerValue {
+        UsedFunctionSignature? usedSig = self.mod.usedFunctionSignatures[signature];
+        if usedSig != () {
+            return usedSig.llSignature;
+        }
+        int index = self.mod.usedFunctionSignatures.length();
+        llvm:ConstPointerValue llSignature = addFunctionSignature(self.mod, self.getModule(), index);
+        self.mod.usedFunctionSignatures.add({signature, index, llSignature});
+        UsedSemType used = self.getUsedSemType(t:functionSemType(self.typeContext(), signature));
+        used.inherentType = llSignature;
+        return llSignature;
+    }
+
     function getDecimal(decimal val) returns DecimalDefn {
         string str = val.toString();
         DecimalDefn? curDefn = self.mod.decimalDefns[str];
@@ -608,10 +621,17 @@ function isIntConstrainedToImmediate(t:IntSubtypeConstraints? c) returns boolean
     return IMMEDIATE_INT_MIN <= c.min && c.max <= IMMEDIATE_INT_MAX;
 }
 
-function addFunctionValueDefn(llvm:Context context, llvm:Module mod, llvm:Function func, t:FunctionSignature signature, int defnIndex) returns llvm:ConstPointerValue {
-    llvm:StructType ty = llvm:structType([llvm:pointerType(buildFunctionSignature(signature))]);
-    llvm:ConstValue initValue = context.constStruct([func]);
-    llvm:ConstPointerValue ptr = mod.addGlobal(ty,
+function addFunctionSignature(Module mod, llvm:Module llMod, int signatureIndex) returns llvm:ConstPointerValue {
+    string signatureSymbol = mangleFunctionSignatureSymbol(mod.modId, signatureIndex);
+    llvm:ConstPointerValue llSignature = llMod.addGlobal(LLVM_FUNCTION_SIGNATURE, signatureSymbol, isConstant=true);
+    return llSignature;
+}
+
+function addFunctionValueDefn(llvm:Context context, llvm:Module llMod, llvm:Function func, llvm:ConstPointerValue llSignature,
+                              t:FunctionSignature signature, int defnIndex) returns llvm:ConstPointerValue {
+    llvm:StructType ty = llvm:structType([llvm:pointerType(buildFunctionSignature(signature)), llvm:pointerType(LLVM_FUNCTION_SIGNATURE)]);
+    llvm:ConstValue initValue = context.constStruct([llSignature, func]);
+    llvm:ConstPointerValue ptr = llMod.addGlobal(ty,
                                                functionDefnSymbol(defnIndex),
                                                initializer = initValue,
                                                align = 8,

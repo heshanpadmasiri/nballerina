@@ -360,6 +360,7 @@ typedef void (*UniformCallFunction)(TaggedPtr uniformArgs, int64_t nArgs, Functi
 
 // TODO: properly represent rest
 typedef struct FunctionSignature {
+    Tid tid;
     UniformCallFunction uniformCallFunction;
     MemberType returnTy;
     MemberType restTy;
@@ -368,6 +369,7 @@ typedef struct FunctionSignature {
 } *FunctionSignaturePtr;
 
 typedef GC struct FunctionValue {
+    FunctionSignaturePtr signature;
     FunctionPtr funcPtr;
 } *FunctionValuePtr;
 

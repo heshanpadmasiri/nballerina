@@ -14,6 +14,10 @@ public function main() {
     io:println(exec(b)); // @output 2
     BinaryOperation c = { op: addAny, left: 2, right: 2 };
     io:println(exec(c)); // @output 4
+    c.op = add;
+    io:println(exec(c)); // @output 4
+    a.op = addAny;
+    io:println(exec(a)); // @output 3
 }
 
 function exec(BinaryOperation op) returns int {
