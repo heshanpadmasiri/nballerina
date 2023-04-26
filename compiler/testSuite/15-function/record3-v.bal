@@ -19,7 +19,7 @@ public function main() {
 
 function executeOp(Op op) returns int {
     BinaryFn|UnaryFn fn = op.fn;
-    if (fn is BinaryFn) {
+    if fn is BinaryFn {
         return fn(op.lhs, op.rhs);
     } else {
         return fn(op.lhs);

@@ -1,11 +1,4 @@
 #include "balrt.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-void _bal_debug_ptr(TaggedPtr p) {
-    printf("debug_pointer: %p\n", p);
-}
 
 bool _bal_function_subtype_contains(UniformSubtypePtr stp, TaggedPtr p) {
     if ((getTag(p) & UT_MASK) != TAG_FUNCTION) {
@@ -35,7 +28,6 @@ bool _bal_function_subtype_contains(UniformSubtypePtr stp, TaggedPtr p) {
     return true;
 }
 
-// TODO: separate out inline functions like isExact
 bool _bal_is_exact(FunctionSignaturePtr signature, FunctionValuePtr value) {
     return signature == value->signature;
 }
@@ -46,9 +38,6 @@ TaggedPtr* _bal_create_uniform_arg_array(int64_t argCount) {
 }
 
 void _bal_add_uniform_arg(TaggedPtr* arr, int64_t index, TaggedPtr arg) {
-    // printf("add called\n");
-    // printf("arg: %p\n", arg);
-    // printf("array: %p\n", arr);
     arr[index] = arg;
 }
 
@@ -64,20 +53,12 @@ void _bal_add_rest_args(TaggedPtr* arr, int64_t index, TaggedPtr restArgArray) {
 
 void _bal_add_uniform_args_to_rest_array(TaggedPtr* arr, int64_t nArgs, int64_t startingOffset, TaggedPtr restArgArray) {
     ListPtr lp = taggedToPtr(restArgArray);
-    // void BAL_LANG_ARRAY_NAME(push)(TaggedPtr p, TaggedPtr val) {
     for (int64_t i = 0; i < nArgs; i++) {
         TaggedPtr val = arr[startingOffset + i];
-        // _bal_debug_ptr(val);
         int64_t len = lp->gArray.length;
         PanicCode err = lp->desc->set(restArgArray, len, val);
         if (err != 0) {
             _bal_panic_internal(err);
         }
     }
-}
-
-// FIXME:
-void _bal_tmp_panic() {
-    printf("PANIC!");
-    exit(1);
 }

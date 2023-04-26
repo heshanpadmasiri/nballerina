@@ -123,7 +123,14 @@ type Module record {|
     bir:File[] partFiles;
     ModuleDI? di;
     table<UsedSemType> key(semType) usedSemTypes = table [];
+    table<UsedFunctionSignature> key(signature) usedFunctionSignatures = table [];
     InitTypes llInitTypes;
+|};
+
+type UsedFunctionSignature record {|
+    readonly t:FunctionSignature signature;
+    readonly llvm:ConstPointerValue llSignature;
+    int index;
 |};
 
 type UsedSemType record {|
@@ -261,7 +268,10 @@ class Scaffold {
         if curDefn != () {
             return curDefn.value;
         }
-        llvm:ConstPointerValue value = addFunctionValueDefn(self.llContext(), self.getModule(), func, signature, self.mod.functionValueDefns.length());
+        llvm:ConstPointerValue llSignature = self.getFunctionSignatureValue(signature);
+        llvm:ConstPointerValue value = addFunctionValueDefn(self.llContext(), self.getModule(), func, llSignature,
+                                                            self.getInherentType(t:functionSemType(self.typeContext(), signature)),
+                                                            signature, self.mod.functionValueDefns.length());
         self.mod.functionValueDefns.add({value, symbol });
         return value;
     }
@@ -274,8 +284,6 @@ class Scaffold {
         int index = self.mod.usedFunctionSignatures.length();
         llvm:ConstPointerValue llSignature = addFunctionSignature(self.mod, self.getModule(), index);
         self.mod.usedFunctionSignatures.add({signature, index, llSignature});
-        UsedSemType used = self.getUsedSemType(t:functionSemType(self.typeContext(), signature));
-        used.inherentType = llSignature;
         return llSignature;
     }
 
@@ -369,7 +377,7 @@ class Scaffold {
         if value == () {
             Module m = self.mod;
             string symbol = mangleTypeSymbol(m.modId, USED_INHERENT_TYPE, used.index);
-            llvm:ConstPointerValue v = m.llMod.addGlobal(llStructureDescType, symbol, isConstant = true);
+            llvm:ConstPointerValue v = m.llMod.addGlobal(llDerivedDescType, symbol, isConstant = true);
             used.inherentType = v;
             return v;
         }
@@ -628,16 +636,22 @@ function addFunctionSignature(Module mod, llvm:Module llMod, int signatureIndex)
 }
 
 function addFunctionValueDefn(llvm:Context context, llvm:Module llMod, llvm:Function func, llvm:ConstPointerValue llSignature,
-                              t:FunctionSignature signature, int defnIndex) returns llvm:ConstPointerValue {
-    llvm:StructType ty = llvm:structType([llvm:pointerType(buildFunctionSignature(signature)), llvm:pointerType(LLVM_FUNCTION_SIGNATURE)]);
-    llvm:ConstValue initValue = context.constStruct([llSignature, func]);
-    llvm:ConstPointerValue ptr = llMod.addGlobal(ty,
-                                               functionDefnSymbol(defnIndex),
-                                               initializer = initValue,
-                                               align = 8,
-                                               isConstant=true,
-                                               unnamedAddr=true,
-                                               linkage= "internal");
+                              llvm:ConstPointerValue llDerivedDescPtr, t:FunctionSignature signature, int defnIndex) returns llvm:ConstPointerValue {
+    llvm:ConstValue initValue = context.constStruct([llDerivedDescPtr, llSignature, func]);
+    llvm:ConstPointerValue ptr = llMod.addGlobal(functionValueType(signature),
+                                                 functionDefnSymbol(defnIndex),
+                                                 initializer = initValue,
+                                                 align = 8,
+                                                 isConstant=true,
+                                                 unnamedAddr=true,
+                                                 linkage= "internal");
     return context.constGetElementPtr(context.constAddrSpaceCast(ptr, LLVM_TAGGED_PTR),
                                       [context.constInt(LLVM_INT, TAG_FUNCTION)]);
+}
+
+
+function functionValueType(t:FunctionSignature signature) returns llvm:StructType {
+    return llvm:structType([llDerivedDescPtrType,
+                            llvm:pointerType(LLVM_FUNCTION_SIGNATURE),
+                            llvm:pointerType(buildFunctionSignature(signature))]);
 }

@@ -14,14 +14,32 @@ const LLVM_TID = "i32";
 const LLVM_MEMBER_TYPE = "i64";
 const LLVM_PANIC_CODE = "i64";
 
-final llvm:StructType llStructureDescType = llvm:structType([LLVM_TID]);
-final llvm:PointerType llStructureDescPtrType = llvm:pointerType(llStructureDescType);
+final llvm:StructType llDerivedDescType = llvm:structType([LLVM_TID]);
+final llvm:PointerType llDerivedDescPtrType = llvm:pointerType(llDerivedDescType);
+
+final llvm:FunctionType LLVM_UNIFORM_CALL_FUNC_TY = llvm:functionType("void", [llvm:pointerType(LLVM_TAGGED_PTR),
+                                                                               "i64",
+                                                                               llvm:pointerType(llvm:functionType("void", [])),
+                                                                               llvm:pointerType(LLVM_TAGGED_PTR)]);
+final llvm:StructType LLVM_FUNCTION_SIGNATURE = llvm:structType([llvm:pointerType(LLVM_UNIFORM_CALL_FUNC_TY),
+                                                                 LLVM_MEMBER_TYPE,
+                                                                 LLVM_MEMBER_TYPE,
+                                                                 LLVM_INT,
+                                                                 llvm:pointerType(LLVM_MEMBER_TYPE)]);
+
+final llvm:StructType LLVM_FUNCTION_VALUE = llvm:structType([llvm:pointerType(llvm:functionType("void", [])), llvm:pointerType(LLVM_FUNCTION_SIGNATURE)]);
+final llvm:PointerType LLVM_FUNCTION_PTR = llvm:pointerType(LLVM_FUNCTION_VALUE, 1);
 
 // This is an approximation, to share type between init.bal and types.bal
 final llvm:PointerType fillerDescPtrType = llvm:pointerType(llvm:structType(
                                                 [llvm:pointerType(llvm:functionType(LLVM_TAGGED_PTR,
                                                                                     [llvm:pointerType("i8"), llvm:pointerType(LLVM_BOOLEAN)]))]
                                             ));
+
+type FunctionSignatureDefn record {|
+    readonly t:FunctionSignature signature;
+    readonly llvm:ConstPointerValue llSignature;
+|};
 
 // This is an approximation, but close enough since we are only accessing the pointer in C.
 final llvm:StructType llComplexType = llvm:structType([LLVM_BITSET, LLVM_BITSET, llvm:arrayType(llvm:pointerType("i8"), 0)]);
@@ -154,6 +172,14 @@ function mangleTypeSymbol(bir:ModuleId modId, TypeHowUsed howUsed, int index) re
     return result;    
 }
 
+function mangleFunctionSignatureSymbol(bir:ModuleId modId, int index) returns string {
+    string result = "_Bf";
+    result += mangleOrg(modId.org);
+    result += mangleModuleNames(modId.names);
+    result += index.toString();
+    return result;
+}
+
 function constNil(Context cx) returns llvm:ConstPointerValue => cx.llContext().constNull(LLVM_NIL_TYPE);
 
 function constNilTaggedPtr(Context cx) returns llvm:ConstPointerValue => cx.llContext().constNull(LLVM_TAGGED_PTR);
@@ -178,3 +204,33 @@ function constI16(Context cx, int val) returns llvm:ConstValue => cx.llContext()
 
 function constFloat(Context cx, float val) returns llvm:ConstValue => cx.llContext().constFloat(LLVM_FLOAT, val);
 
+
+function buildRuntimeFunctionCall(llvm:Builder builder, Scaffold|InitModuleContext context, RuntimeFunction rf, llvm:Value[] args) returns llvm:Value {
+    if context is Scaffold {
+        return <llvm:Value>buildFunctionCall(builder, context, context.getRuntimeFunctionDecl(rf), args);
+    }
+    else {
+        return <llvm:Value>buildInitRuntimeFunctionCall(builder, <InitModuleContext>context, rf, args);
+    }
+}
+
+function buildVoidRuntimeFunctionCall(llvm:Builder builder, Scaffold|InitModuleContext context, RuntimeFunction rf, llvm:Value[] args) {
+    if context is Scaffold {
+        return <()>buildFunctionCall(builder, context, context.getRuntimeFunctionDecl(rf), args);
+    }
+    else {
+        return <()>buildInitRuntimeFunctionCall(builder, <InitModuleContext>context, rf, args);
+    }
+}
+
+function buildUntagInt(llvm:Builder builder, Scaffold|InitModuleContext context, llvm:PointerValue tagged) returns llvm:Value {
+    return buildRuntimeFunctionCall(builder, context, taggedToIntFunction, [tagged]);
+}
+
+function buildUntagFloat(llvm:Builder builder, Scaffold|InitModuleContext scaffold, llvm:PointerValue tagged) returns llvm:Value {
+    return buildRuntimeFunctionCall(builder, scaffold, taggedToFloatFunction, [tagged]);
+}
+
+function buildUntagBoolean(llvm:Builder builder, llvm:PointerValue tagged) returns llvm:Value {
+    return builder.trunc(buildTaggedPtrToInt(builder, tagged), LLVM_BOOLEAN);
+}

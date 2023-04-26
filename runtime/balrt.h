@@ -127,7 +127,7 @@ typedef uint64_t MemberType;
 // All mapping and list descriptors start with this.
 typedef struct {
     Tid tid;
-} StructureDesc, *StructureDescPtr;
+} DerivedDesc, *DerivedDescPtr;
 
 // This is the abstract version of filler descriptor. Each type must
 // implement there own version (or reuse a common version such as GenericFillerDesc)
@@ -142,10 +142,10 @@ typedef struct GenericFillerDesc {
 
 // All mapping and list values start with this
 typedef GC struct {
-    StructureDescPtr desc;
+    DerivedDescPtr desc;
 } Structure, *StructurePtr;
 
-// This extends StructureDesc
+// This extends DerivedDesc
 // i.e must start with tid
 typedef struct {
     Tid tid;
@@ -199,7 +199,7 @@ typedef struct {
     GC MapField *members;
 } MapFieldArray;
 
-// This extends StructureDesc
+// This extends DerivedDesc
 // i.e must start with tid
 typedef struct {
     Tid tid;
@@ -360,7 +360,6 @@ typedef void (*UniformCallFunction)(TaggedPtr uniformArgs, int64_t nArgs, Functi
 
 // TODO: properly represent rest
 typedef struct FunctionSignature {
-    Tid tid;
     UniformCallFunction uniformCallFunction;
     MemberType returnTy;
     MemberType restTy;
@@ -369,6 +368,7 @@ typedef struct FunctionSignature {
 } *FunctionSignaturePtr;
 
 typedef GC struct FunctionValue {
+    DerivedDescPtr derivedDesc;
     FunctionSignaturePtr signature;
     FunctionPtr funcPtr;
 } *FunctionValuePtr;
