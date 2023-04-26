@@ -54,6 +54,11 @@ type FillerDescDefn record {|
     readonly llvm:ConstPointerValue defn;
 |};
 
+type FunctionSignatureDefn record {|
+    readonly t:FunctionSignature signature;
+    readonly llvm:ConstPointerValue llSignature;
+|};
+
 const TYPE_KIND_ARRAY = "array";
 const TYPE_KIND_MAP = "map";
 const TYPE_KIND_RECORD = "record";

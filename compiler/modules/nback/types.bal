@@ -36,11 +36,6 @@ final llvm:PointerType fillerDescPtrType = llvm:pointerType(llvm:structType(
                                                                                     [llvm:pointerType("i8"), llvm:pointerType(LLVM_BOOLEAN)]))]
                                             ));
 
-type FunctionSignatureDefn record {|
-    readonly t:FunctionSignature signature;
-    readonly llvm:ConstPointerValue llSignature;
-|};
-
 // This is an approximation, but close enough since we are only accessing the pointer in C.
 final llvm:StructType llComplexType = llvm:structType([LLVM_BITSET, LLVM_BITSET, llvm:arrayType(llvm:pointerType("i8"), 0)]);
 
