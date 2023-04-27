@@ -68,6 +68,7 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
         paramTypes.push(defineListTypeWrapped(listDefn, cx.env, rest=restInnerVal));
     }
     FunctionSignature signature = { returnType, paramTypes: paramTypes.cloneReadOnly(), restParamType };
+    cx.functionSignatureMemo.add({ atomic, signature });
     return signature;
 }
 
