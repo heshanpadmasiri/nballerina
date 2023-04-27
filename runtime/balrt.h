@@ -358,7 +358,6 @@ typedef void (*FunctionPtr)();
 // result type is an approximation
 typedef void (*UniformCallFunction)(TaggedPtr uniformArgs, int64_t nArgs, FunctionPtr funcPtr, TaggedPtr *result);
 
-// TODO: properly represent rest
 typedef struct FunctionSignature {
     UniformCallFunction uniformCallFunction;
     MemberType returnTy;
