@@ -70,16 +70,7 @@ final RuntimeFunction createUniformArgArray = {
     name: "create_uniform_arg_array",
     ty: {
         returnType: llvm:pointerType(LLVM_TAGGED_PTR),
-        paramTypes: ["i32"]
-    },
-    attrs: []
-};
-
-final RuntimeFunction addUniformArg = {
-    name: "add_uniform_arg",
-    ty: {
-        returnType: LLVM_VOID,
-        paramTypes: [llvm:pointerType(LLVM_TAGGED_PTR), LLVM_INT, LLVM_TAGGED_PTR]
+        paramTypes: ["i64", "i64"]
     },
     attrs: []
 };

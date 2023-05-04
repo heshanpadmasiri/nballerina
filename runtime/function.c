@@ -32,13 +32,14 @@ bool _bal_is_exact(FunctionSignaturePtr signature, FunctionValuePtr value) {
     return signature == value->signature;
 }
 
-TaggedPtr* _bal_create_uniform_arg_array(int64_t argCount) {
+TaggedPtr* _bal_create_uniform_arg_array(int64_t fixedArgCount, int64_t restArgCount) {
+    if (restArgCount >= INT64_MAX - fixedArgCount) {
+        // realistically only way this could happen is when you spread a list with a fixed number of arguments
+        _bal_panic_internal(PANIC_LIST_TOO_LONG);
+    }
+    int64_t argCount = fixedArgCount + restArgCount;
     TaggedPtr *arr = (TaggedPtr*)_bal_alloc(sizeof(TaggedPtr) * argCount);
     return arr;
-}
-
-void _bal_add_uniform_arg(TaggedPtr* arr, int64_t index, TaggedPtr arg) {
-    arr[index] = arg;
 }
 
 void _bal_add_rest_args(TaggedPtr* arr, int64_t index, TaggedPtr restArgArray) {

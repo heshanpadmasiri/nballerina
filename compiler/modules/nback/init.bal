@@ -233,6 +233,7 @@ function buildUniformCallFunction(InitModuleContext cx, t:FunctionSignature sign
         llvm:PointerValue restArgArrayPtr = exactArgs[fixedArgCount];
         builder.store(createExactCallRestArgList(cx, builder, signature.paramTypes[fixedArgCount], name), restArgArrayPtr);
         llvm:Value startingOffset = constInt(cx, fixedArgCount);
+        // This should never overflow since number of arguments is less than or equal to required number of arguments.
         llvm:Value nArgs = builder.iArithmeticWrap("sub", func.getParam(1), startingOffset);
         buildVoidRuntimeFunctionCall(builder, cx, addUniformArgsToRestArray, [uniformArgArray,
                                                                               nArgs,
