@@ -33,30 +33,25 @@ bool _bal_is_exact(FunctionSignaturePtr signature, FunctionValuePtr value) {
 }
 
 TaggedPtr* _bal_create_uniform_arg_array(int64_t fixedArgCount, int64_t restArgCount) {
-    if (restArgCount >= INT64_MAX - fixedArgCount) {
-        // realistically only way this could happen is when you spread a list with a fixed number of arguments
-        _bal_panic_internal(PANIC_LIST_TOO_LONG);
-    }
-    int64_t argCount = fixedArgCount + restArgCount;
+    // We are using uint64_t to avoid overflow in case of restArgCount close to INT64_MAX.
+    uint64_t argCount = fixedArgCount + restArgCount;
     TaggedPtr *arr = (TaggedPtr*)_bal_alloc(sizeof(TaggedPtr) * argCount);
     return arr;
 }
 
-void _bal_add_rest_args(TaggedPtr* arr, int64_t index, TaggedPtr restArgArray) {
-    // XXX: can't directly memcpy since values in the array as not tagged.
+void _bal_add_rest_args(TaggedPtr* arr, int64_t startingOffset, TaggedPtr restArgArray) {
     ListPtr lp = taggedToPtr(restArgArray);
     int64_t len = lp->tpArray.length;
-    for (int64_t i = 0; i < len; i++) {
-        arr[index + i] = lp->desc->get(restArgArray, i);
+    for (uint64_t i = 0; i < len; i++) {
+        arr[startingOffset + i] = lp->desc->get(restArgArray, i);
     }
 }
 
-void _bal_add_uniform_args_to_rest_array(TaggedPtr* arr, int64_t nArgs, int64_t startingOffset, TaggedPtr restArgArray) {
+void _bal_add_uniform_args_to_rest_array(TaggedPtr* arr, int64_t remainingArgCount, int64_t startingOffset, TaggedPtr restArgArray) {
     ListPtr lp = taggedToPtr(restArgArray);
-    for (int64_t i = 0; i < nArgs; i++) {
+    for (uint64_t i = 0; i < remainingArgCount; i++) {
         TaggedPtr val = arr[startingOffset + i];
-        int64_t len = lp->gArray.length;
-        PanicCode err = lp->desc->set(restArgArray, len, val);
+        PanicCode err = lp->desc->set(restArgArray, lp->gArray.length, val);
         if (err != 0) {
             _bal_panic_internal(err);
         }
