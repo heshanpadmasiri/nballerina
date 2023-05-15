@@ -57,8 +57,8 @@ type RuntimeFunction readonly & record {|
     llvm:EnumAttribute[] attrs;
 |};
 
-final RuntimeFunction isExactFunction = {
-    name: "is_exact",
+final RuntimeFunction functionIsExactFunction = {
+    name: "function_is_exact",
     ty: {
         returnType: LLVM_BOOLEAN,
         paramTypes: [llvm:pointerType(LLVM_FUNCTION_SIGNATURE), LLVM_FUNCTION_PTR]
@@ -66,17 +66,17 @@ final RuntimeFunction isExactFunction = {
     attrs: []
 };
 
-final RuntimeFunction createUniformArgArray = {
+final RuntimeFunction createUniformArgArrayFunction = {
     name: "create_uniform_arg_array",
     ty: {
         returnType: llvm:pointerType(LLVM_TAGGED_PTR),
-        paramTypes: ["i64", "i64"]
+        paramTypes: ["i64"]
     },
     attrs: []
 };
 
-final RuntimeFunction addRestArgs = {
-    name: "add_rest_args",
+final RuntimeFunction addRestArgsToUniformArgsFunction = {
+    name: "add_rest_args_to_uniform_args",
     ty: {
         returnType: LLVM_VOID,
         paramTypes: [llvm:pointerType(LLVM_TAGGED_PTR), LLVM_INT, LLVM_TAGGED_PTR]
@@ -84,8 +84,8 @@ final RuntimeFunction addRestArgs = {
     attrs: []
 };
 
-final RuntimeFunction addUniformArgsToRestArray = {
-    name: "add_uniform_args_to_rest_array",
+final RuntimeFunction addUniformArgsToRestArgsFunction = {
+    name: "add_uniform_args_to_rest_args",
     ty: {
         returnType: LLVM_VOID,
         paramTypes: [llvm:pointerType(LLVM_TAGGED_PTR), LLVM_INT, LLVM_INT, LLVM_TAGGED_PTR]

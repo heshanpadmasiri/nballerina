@@ -240,7 +240,7 @@ function buildCallIndirect(llvm:Builder builder, Scaffold scaffold, bir:CallIndi
                                                constInt(scaffold, POINTER_MASK));
     llvm:PointerValue unTaggedPtr = builder.getElementPtr(constNil(scaffold), [unTaggedVal], "inbounds");
     llvm:ConstPointerValue llSignature = scaffold.getFunctionSignatureValue(signature);
-    llvm:Value isExact = buildRuntimeFunctionCall(builder, scaffold, isExactFunction,
+    llvm:Value isExact = buildRuntimeFunctionCall(builder, scaffold, functionIsExactFunction,
                                                   [llSignature, builder.bitCast(unTaggedPtr, LLVM_FUNCTION_PTR)]);
     llvm:BasicBlock ifExact = scaffold.addBasicBlock();
     llvm:BasicBlock ifNotExact = scaffold.addBasicBlock();
@@ -291,21 +291,20 @@ function buildNotExactCall(llvm:Builder builder, Scaffold scaffold, bir:CallIndi
         llvm:Value restArgCount = builder.load(builder.getElementPtr(restArray, [constIndex(scaffold, 0),
                                                                                  constIndex(scaffold, 1)],
                                                                      "inbounds"));
-        uniformArgArray = <llvm:PointerValue>buildRuntimeFunctionCall(builder, scaffold, createUniformArgArray, [constInt(scaffold, requiredArgCount),
-                                                                                                                 restArgCount]);
-        // call to createUniformArgArray will panic if this addition overflows
+        // since both requiredArgCount and restArgCount are singed64 this addition will not overflow as long as
+        // runtime treats nArgs as unsigned64 (note llvm don't distinguish signed and unsigned integer types)
         nArgs = builder.iArithmeticWrap("add", constInt(scaffold, requiredArgCount), restArgCount);
+        uniformArgArray = <llvm:PointerValue>buildRuntimeFunctionCall(builder, scaffold, createUniformArgArrayFunction, [nArgs]);
         foreach int i in 0 ..< uniformArgs.length() {
             builder.store(uniformArgs[i], builder.getElementPtr(uniformArgArray, [constInt(scaffold, i)], "inbounds"));
         }
-        buildVoidRuntimeFunctionCall(builder, scaffold, addRestArgs, [uniformArgArray,
-                                                                      constInt(scaffold, uniformArgs.length()),
-                                                                      builder.bitCast(restArray, LLVM_TAGGED_PTR)]);
+        buildVoidRuntimeFunctionCall(builder, scaffold, addRestArgsToUniformArgsFunction, [uniformArgArray,
+                                                                                           constInt(scaffold, uniformArgs.length()),
+                                                                                           builder.bitCast(restArray, LLVM_TAGGED_PTR)]);
     }
     else {
-        uniformArgArray = <llvm:PointerValue>buildRuntimeFunctionCall(builder, scaffold, createUniformArgArray, [constInt(scaffold, requiredArgCount),
-                                                                                                                 constInt(scaffold, 0)]);
         nArgs = constInt(scaffold, requiredArgCount);
+        uniformArgArray = <llvm:PointerValue>buildRuntimeFunctionCall(builder, scaffold, createUniformArgArrayFunction, [nArgs]);
         foreach int i in 0 ..< uniformArgs.length() {
             builder.store(uniformArgs[i], builder.getElementPtr(uniformArgArray, [constInt(scaffold, i)], "inbounds"));
         }
