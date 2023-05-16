@@ -271,9 +271,9 @@ function buildExactCall(llvm:Builder builder, Scaffold scaffold, bir:CallIndirec
 
 function buildNotExactCall(llvm:Builder builder, Scaffold scaffold, bir:CallIndirectInsn insn,
                            llvm:BasicBlock afterCall, llvm:PointerValue funcStructPtr, t:FunctionSignature signature) returns BuildError? {
-    var { paramTypes, restParamType } = signature;
+    var { returnType, paramTypes, restParamType } = signature;
     int requiredArgCount = restParamType == () ? paramTypes.length() : paramTypes.length() - 1;
-    // converting to TaggedRepr alway return a pointer value
+    // converting to TaggedRepr always return a pointer value
     llvm:PointerValue[] uniformArgs = from int i in 1 ..< requiredArgCount + 1
                                         select <llvm:PointerValue>(check buildRepr(builder, scaffold, insn.operands[i],
                                                                                    uniformRepr(insn.operands[i].semType)));
@@ -318,7 +318,7 @@ function buildNotExactCall(llvm:Builder builder, Scaffold scaffold, bir:CallIndi
     llvm:PointerValue callUniformFuncPtr = <llvm:PointerValue>builder.load(builder.getElementPtr(fnSignaturePtr, [constIndex(scaffold, 0),
                                                                                                                   constIndex(scaffold, 0)],
                                                                                                  "inbounds"));
-    _ = <()>builder.call(callUniformFuncPtr, [uniformArgArray, nArgs, funcPtr, scaffold.address(insn.result)]);
+    _ = <()>builder.call(callUniformFuncPtr, [uniformArgArray, nArgs, funcPtr, constBoolean(scaffold, semTypeRetRepr(returnType) is TaggedRepr), scaffold.address(insn.result)]);
     builder.br(afterCall);
 }
 

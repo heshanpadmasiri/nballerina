@@ -222,7 +222,7 @@ function buildUniformCallFunction(InitModuleContext cx, t:FunctionSignature sign
     foreach int i in 0 ..< nRequiredParams {
         llvm:PointerValue uniformArg = <llvm:PointerValue>builder.load(builder.getElementPtr(uniformArgArray,
                                                                                             [constIndex(cx, i)]));
-        ExactArgTransformerFn transformFn = exactArgTransformerFn(signature.paramTypes[i]);
+        ExactArgConvertFn transformFn = exactArgConvertFn(signature.paramTypes[i]);
         llvm:Value arg = transformFn(builder, cx, uniformArg);
         builder.store(arg, exactArgs[i]);
     }
@@ -240,8 +240,21 @@ function buildUniformCallFunction(InitModuleContext cx, t:FunctionSignature sign
     llvm:Value? retValue = builder.call(builder.bitCast(<llvm:PointerValue>func.getParam(2), llvm:pointerType(fnTy)),
                                         from var each in exactArgs select builder.load(each));
     if retValue !is () {
-        llvm:PointerValue returnRegister = builder.bitCast(<llvm:PointerValue>func.getParam(3), llvm:pointerType(<llvm:Type>fnTy.returnType));
-        builder.store(retValue, returnRegister);
+        llvm:PointerValue retRegister = <llvm:PointerValue>func.getParam(4);
+        llvm:BasicBlock taggedReturnBb = func.appendBasicBlock();
+        llvm:BasicBlock unTaggedReturnBb = func.appendBasicBlock();
+        llvm:BasicBlock finalBb = func.appendBasicBlock();
+        builder.condBr(func.getParam(3), taggedReturnBb, unTaggedReturnBb);
+        builder.positionAtEnd(unTaggedReturnBb);
+        builder.store(retValue, builder.bitCast(retRegister, llvm:pointerType(<llvm:Type>fnTy.returnType)));
+        builder.br(finalBb);
+
+        builder.positionAtEnd(taggedReturnBb);
+        TaggedBuildFn transformFn = buildTaggedValueFn(signature.returnType);
+        builder.store(transformFn(builder, cx, retValue), retRegister);
+        builder.br(finalBb);
+
+        builder.positionAtEnd(finalBb);
     }
     builder.ret();
     return func;
@@ -251,9 +264,10 @@ function requiredParamCount(t:FunctionSignature signature) returns int {
     return signature.restParamType == () ? signature.paramTypes.length() : signature.paramTypes.length() - 1;
 }
 
-type ExactArgTransformerFn function(llvm:Builder builder, Scaffold|InitModuleContext context, llvm:PointerValue arg) returns llvm:Value;
+type ExactArgConvertFn function(llvm:Builder builder, Scaffold|InitModuleContext context, llvm:PointerValue arg) returns llvm:Value;
+type TaggedBuildFn function(llvm:Builder builder, Scaffold|InitModuleContext context, llvm:Value arg) returns llvm:Value;
 
-function exactArgTransformerFn(t:SemType ty) returns ExactArgTransformerFn {
+function exactArgConvertFn(t:SemType ty) returns ExactArgConvertFn {
     t:BasicTypeBitSet w = t:widenToBasicTypes(ty);
     if t:isSubtypeSimple(w, t:INT) {
         return buildUntagInt;
@@ -263,6 +277,22 @@ function exactArgTransformerFn(t:SemType ty) returns ExactArgTransformerFn {
     }
     else if t:isSubtypeSimple(ty, t:BOOLEAN) {
         return (builder, context, arg) => buildUntagBoolean(builder, arg);
+    }
+    else {
+        return (builder, context, arg) => arg;
+    }
+}
+
+function buildTaggedValueFn(t:SemType ty) returns TaggedBuildFn {
+    t:BasicTypeBitSet w = t:widenToBasicTypes(ty);
+    if t:isSubtypeSimple(w, t:INT) {
+        return buildTaggedInt;
+    }
+    else if t:isSubtypeSimple(ty, t:FLOAT) {
+        return buildTaggedFloat;
+    }
+    else if t:isSubtypeSimple(ty, t:BOOLEAN) {
+        return buildTaggedBoolean;
     }
     else {
         return (builder, context, arg) => arg;

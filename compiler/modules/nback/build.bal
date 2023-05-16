@@ -319,26 +319,11 @@ function buildConvertRepr(llvm:Builder builder, Scaffold scaffold, Repr sourceRe
     panic err:impossible("unimplemented conversion required");
 }
 
-function buildTaggedBoolean(llvm:Builder builder, Scaffold scaffold, llvm:Value value) returns llvm:Value {
-    return builder.getElementPtr(constNilTaggedPtr(scaffold),
-                                     [builder.iBitwise("or",
-                                                       builder.zExt(value, LLVM_INT),
-                                                       constInt(scaffold, TAG_BOOLEAN))]);
-}
-
-function buildTaggedInt(llvm:Builder builder, Scaffold scaffold, llvm:Value value) returns llvm:PointerValue {
-    return <llvm:PointerValue>buildRuntimeFunctionCall(builder, scaffold, intToTaggedFunction, [value]);
-}
-
 // only use when compile time know that IMMEDIATE_INT_MIN <= value && value <= IMMEDIATE_INT_MAX
 function buildImmediateTaggedInt(llvm:Builder builder, Scaffold scaffold, llvm:Value value) returns llvm:PointerValue {
     var low56 = builder.iBitwise("and", constInt(scaffold, (1 << TAG_SHIFT) - 1), value);
     var tagged = builder.iBitwise("or", constInt(scaffold, FLAG_IMMEDIATE | TAG_INT), low56);
     return builder.getElementPtr(constNilTaggedPtr(scaffold), [tagged]);
-}
-
-function buildTaggedFloat(llvm:Builder builder, Scaffold scaffold, llvm:Value value) returns llvm:PointerValue {
-    return <llvm:PointerValue>buildRuntimeFunctionCall(builder, scaffold, floatToTaggedFunction, [value]);
 }
 
 function buildTaggedPtr(llvm:Builder builder, Scaffold scaffold, llvm:PointerValue mem, int tag) returns llvm:PointerValue {
