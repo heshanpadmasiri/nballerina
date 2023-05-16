@@ -72,6 +72,44 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
     return signature;
 }
 
+public function functionAlternativeAtom(Context cx, SemType ty) returns FunctionAtomicType? {
+    FunctionAtomicType? atomic = functionAtomicType(cx, ty);
+    if atomic != () {
+        return atomic;
+    }
+    SemType functionTy = intersect(ty, FUNCTION);
+    if isEmpty(cx, functionTy) {
+        return ();
+    }
+    if functionTy is BasicTypeBitSet {
+        // We can't call these so for our purposes this is fine
+        return ();
+    }
+    BddPath[] paths = [];
+    bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
+    FunctionAtomicType[] atomics = []; 
+    foreach var {pos, neg} in paths {
+        if neg.length() != 0 || pos.length() != 1 {
+            return ();
+        }
+        atomics.push(cx.functionAtomType(pos[0]));
+    }
+    if atomics.length() == 0 {
+        return ();
+    }
+    var [args, ret] = atomics[0];
+    foreach int i in 1..<atomics.length() {
+        var [args2, ret2] = atomics[i];
+        args = intersect(args2, args);
+        ret = union(ret2, ret);
+    }
+    FunctionDefinition defn = new;
+    SemType unionTy = defn.define(cx.env, args, ret);
+    return <FunctionAtomicType>functionAtomicType(cx, unionTy);
+    // FunctionSignature signature = functionSignature(cx, atomic); 
+    // return [unionTy, atomic, signature];
+}
+
 public function functionSemType(Context cx, FunctionSignature signature) returns SemType {
     FunctionTypeMemo? memo = cx.functionAtomicTypeMemo[signature];
     if memo != () {

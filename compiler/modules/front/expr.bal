@@ -1397,13 +1397,10 @@ function codeGenFunctionCallExpr(ExprContext cx, bir:BasicBlock bb, s:FunctionCa
         }
         else if ref is Binding {
             t:SemType semType = ref.reg.semType;
-            t:FunctionAtomicType? atom = t:functionAtomicType(cx.mod.tc, semType);
+            t:FunctionAtomicType? atom = t:functionAlternativeAtom(cx.mod.tc, semType);
             if atom == () {
                 if t:isSubtype(cx.mod.tc, semType, t:FUNCTION) {
-                    if semType == t:FUNCTION || t:isSubtype(cx.mod.tc, t:FUNCTION, semType) {
-                        return cx.semanticErr("only values of proper subtype of function can be called", expr.qNamePos);
-                    }
-                    return cx.unimplementedErr("can't call function values that don't belong to single explicit type", expr.qNamePos);
+                    return cx.semanticErr("only values of proper subtype of function can be called", expr.qNamePos);
                 }
                 return cx.semanticErr("only a value of function type can be called", expr.qNamePos);
             }
