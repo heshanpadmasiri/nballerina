@@ -230,9 +230,7 @@ function buildCall(llvm:Builder builder, Scaffold scaffold, bir:CallInsn insn) r
 }
 
 function buildCallIndirect(llvm:Builder builder, Scaffold scaffold, bir:CallIndirectInsn insn) returns BuildError? {
-    // XXX: Once we properly support function types (ability to call unions), semType will no longer guaranteed to be a function atom
-    t:FunctionAtomicType atomic = <t:FunctionAtomicType>t:functionAlternativeAtom(scaffold.typeContext(), insn.operands[0].semType);
-    t:FunctionSignature signature = t:functionSignature(scaffold.typeContext(), atomic);
+    t:FunctionSignature signature = <t:FunctionSignature>t:functionUnionSignature(scaffold.typeContext(), insn.operands[0].semType);
     llvm:PointerType fnStructPtrTy = llvm:pointerType(functionValueType(signature));
     llvm:PointerValue unTaggedPtr = <llvm:PointerValue>builder.call(scaffold.getIntrinsicFunction("ptrmask.p1.i64"),
                                                                     [<llvm:PointerValue>builder.load(scaffold.address(insn.operands[0])),

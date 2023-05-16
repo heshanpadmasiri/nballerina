@@ -58,8 +58,14 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
     if memo != () {
         return memo.signature;
     }
-    var [argList, returnType] = atomic;
-    ListAtomicType listAtom = <ListAtomicType>listAtomicType(cx, argList);
+    var [paramTy, returnTy] = atomic;
+    FunctionSignature signature = createFunctionSignature(cx, paramTy, returnTy);
+    cx.functionSignatureMemo.add({ atomic, signature });
+    return signature;
+}
+
+function createFunctionSignature(Context cx, SemType paramListType, SemType returnType) returns FunctionSignature {
+    ListAtomicType listAtom = <ListAtomicType>listAtomicType(cx, paramListType);
     SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
     SemType restInnerVal = cellInnerVal(listAtom.rest);
     SemType? restParamType = restInnerVal == NEVER ? () : restInnerVal;
@@ -67,15 +73,13 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
         ListDefinition listDefn = new;
         paramTypes.push(defineListTypeWrapped(listDefn, cx.env, rest=restInnerVal));
     }
-    FunctionSignature signature = { returnType, paramTypes: paramTypes.cloneReadOnly(), restParamType };
-    cx.functionSignatureMemo.add({ atomic, signature });
-    return signature;
+    return { returnType, paramTypes: paramTypes.cloneReadOnly(), restParamType };
 }
 
-public function functionAlternativeAtom(Context cx, SemType ty) returns FunctionAtomicType? {
+public function functionUnionSignature(Context cx, SemType ty) returns FunctionSignature? {
     FunctionAtomicType? atomic = functionAtomicType(cx, ty);
     if atomic != () {
-        return atomic;
+        return functionSignature(cx, atomic);
     }
     SemType functionTy = intersect(ty, FUNCTION);
     if isEmpty(cx, functionTy) {
@@ -98,16 +102,12 @@ public function functionAlternativeAtom(Context cx, SemType ty) returns Function
         return ();
     }
     var [args, ret] = atomics[0];
-    foreach int i in 1..<atomics.length() {
+    foreach int i in 1..< atomics.length() {
         var [args2, ret2] = atomics[i];
         args = intersect(args2, args);
         ret = union(ret2, ret);
     }
-    FunctionDefinition defn = new;
-    SemType unionTy = defn.define(cx.env, args, ret);
-    return <FunctionAtomicType>functionAtomicType(cx, unionTy);
-    // FunctionSignature signature = functionSignature(cx, atomic); 
-    // return [unionTy, atomic, signature];
+    return createFunctionSignature(cx, args, ret);
 }
 
 public function functionSemType(Context cx, FunctionSignature signature) returns SemType {
