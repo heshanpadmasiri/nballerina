@@ -66,41 +66,56 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
 }
 
 function createFunctionSignature(Context cx, SemType paramListType, SemType returnType) returns FunctionSignature {
-    ListAtomicType listAtom;
-    // param list type is not atomic when the handling function intersections
-    ListAtomicType? lat = listAtomicType(cx, paramListType);
-    if lat != () {
-        listAtom = lat;
-    }
-    else {
-        // FIXME: not sure this is the correct way to do this
-        ListAlternative[] alts = listAlternatives(cx, paramListType);
-        // we are going to get ambiguous param list types here (how to handle it)
-        // if alts.length() != 1 {
-        //     panic err:impossible("ambiguous param list type");
-        // }
-        SemType semType = alts[0].semType;
-        listAtom = <ListAtomicType>listAtomicType(cx, semType);
-        // panic err:impossible("non atomic param list type");
-    }
-    SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
+    var [paramTypes, restType] = deconstructParamType(cx, paramListType);
     // FIXME: remove these sanity checks
     foreach var [i, paramTy] in paramTypes.enumerate() {
         if isSubtype(cx, paramTy, NEVER) {
             panic error("unexpected param id" + i.toString());
         }
     }
-    if isSubtype(cx, returnType, NEVER) {
-        panic error("unexpected return type");
-    }
+    // if isSubtype(cx, returnType, NEVER) {
+    //     panic error("unexpected return type");
+    // }
 
-    SemType restInnerVal = cellInnerVal(listAtom.rest);
-    SemType? restParamType = restInnerVal == NEVER ? () : restInnerVal;
+    SemType? restParamType = restType == NEVER ? () : restType;
     if restParamType != () {
         ListDefinition listDefn = new;
-        paramTypes.push(defineListTypeWrapped(listDefn, cx.env, rest=restInnerVal));
+        paramTypes.push(defineListTypeWrapped(listDefn, cx.env, rest=restType));
     }
     return { returnType, paramTypes: paramTypes.cloneReadOnly(), restParamType };
+}
+
+function deconstructParamType(Context cx, SemType paramListType) returns [SemType[], SemType] {
+    // param list type is not atomic when the handling function intersections
+    ListAtomicType? listAtom = listAtomicType(cx, paramListType);
+    if listAtom != () {
+        SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
+        SemType restInnerVal = cellInnerVal(listAtom.rest);
+        return [paramTypes, restInnerVal];
+    }
+    // What I need,
+    // * number of fixed params
+    // * rest param type
+    ListAlternative[] alts = listAlternatives(cx, paramListType);
+    ListAtomicType[] listAtoms = [];
+    SemType[] restTypes = [];
+    int fixedLength = 0;
+    foreach var {pos, neg} in alts {
+        if neg.length() > 0 {
+            panic err:impossible("unexpected negation in param list type");
+        }
+        if pos != () {
+            listAtoms.push(pos);
+            fixedLength = int:max(fixedLength, pos.members.fixedLength);
+            restTypes.push(cellInnerVal(pos.rest));
+        }
+    }
+    SemType[] paramTypes = [];
+    foreach int i in 0..<fixedLength {
+        SemType[] types = from var atom in listAtoms select listAtomicTypeMemberAtInnerVal(atom, i);
+        paramTypes.push(types.reduce(union, types[0]));
+    }
+    return [paramTypes, restTypes.reduce(union, restTypes[0])];
 }
 
 // TODO: this is more than union so we need a better name here
@@ -149,11 +164,16 @@ public function complexFunctionSignature(Context cx, SemType ty) returns Functio
                 }
             }
         }
-        selectedCodomains.push(codomains.reduce(intersect, codomains[0]));
+        if codomains.length() > 0 {
+            selectedCodomains.push(codomains.reduce(intersect, codomains[0]));
+        }
     }
     if selectedCodomains.length() == 0 {
-        // this shouldn't happen ?
-        panic err:impossible("expect at least a single codomain");
+        // this can happen when you make an invalid function intersections (eg: (int) returns T1 & (string) returns T2))
+        // then non of the functions will have their domains as part of the resultant functions domain
+        // thus there is codomain
+        // FIXME: we should show a proper error for this
+        return ();
     }
     return createFunctionSignature(cx, domain, selectedCodomains.reduce(union, selectedCodomains[0]));
 }
