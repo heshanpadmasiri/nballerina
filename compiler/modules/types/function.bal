@@ -66,22 +66,22 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
 }
 
 function createFunctionSignature(Context cx, SemType paramListType, SemType returnType) returns FunctionSignature {
-    // paramListType may not be atomic
-    ListAtomicType listAtom;
-    ListAtomicType? lat = listAtomicType(cx, paramListType);
-    if lat != () {
-        listAtom = lat;
-    }
-    else {
-        // FIXME: not sure this is the correct way to do this
-        ListAlternative[] alts = listAlternatives(cx, paramListType);
-        if alts.length() != 1 {
-            panic err:impossible("ambiguous param list type");
-        }
-        SemType semType = alts[0].semType;
-        listAtom = <ListAtomicType>listAtomicType(cx, semType);
-        panic err:impossible("non atomic param list type");
-    }
+    ListAtomicType listAtom = <ListAtomicType>listAtomicType(cx, paramListType);
+    // paramListType may not be atomic?
+    // ListAtomicType? lat = listAtomicType(cx, paramListType);
+    // if lat != () {
+    //     listAtom = lat;
+    // }
+    // else {
+    //     // FIXME: not sure this is the correct way to do this
+    //     ListAlternative[] alts = listAlternatives(cx, paramListType);
+    //     if alts.length() != 1 {
+    //         panic err:impossible("ambiguous param list type");
+    //     }
+    //     SemType semType = alts[0].semType;
+    //     listAtom = <ListAtomicType>listAtomicType(cx, semType);
+    //     panic err:impossible("non atomic param list type");
+    // }
     SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
     // FIXME: remove these sanity checks
     foreach var [i, paramTy] in paramTypes.enumerate() {
