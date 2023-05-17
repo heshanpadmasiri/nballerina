@@ -1398,7 +1398,7 @@ function codeGenFunctionCallExpr(ExprContext cx, bir:BasicBlock bb, s:FunctionCa
         }
         else if ref is Binding {
             t:SemType semType = ref.reg.semType;
-            t:FunctionSignature? refSignature = t:functionUnionSignature(cx.mod.tc, semType);
+            t:FunctionSignature? refSignature = t:complexFunctionSignature(cx.mod.tc, semType);
             if refSignature == () {
                 if t:isSubtype(cx.mod.tc, semType, t:FUNCTION) {
                     return cx.semanticErr("only values of proper subtype of function can be called", expr.qNamePos);

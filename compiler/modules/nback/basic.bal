@@ -230,7 +230,7 @@ function buildCall(llvm:Builder builder, Scaffold scaffold, bir:CallInsn insn) r
 }
 
 function buildCallIndirect(llvm:Builder builder, Scaffold scaffold, bir:CallIndirectInsn insn) returns BuildError? {
-    t:FunctionSignature signature = <t:FunctionSignature>t:functionUnionSignature(scaffold.typeContext(), insn.operands[0].semType);
+    t:FunctionSignature signature = <t:FunctionSignature>t:complexFunctionSignature(scaffold.typeContext(), insn.operands[0].semType);
     llvm:PointerType fnStructPtrTy = llvm:pointerType(functionValueType(signature));
     llvm:PointerValue unTaggedPtr = <llvm:PointerValue>builder.call(scaffold.getIntrinsicFunction("ptrmask.p1.i64"),
                                                                     [<llvm:PointerValue>builder.load(scaffold.address(insn.operands[0])),

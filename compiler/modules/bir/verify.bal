@@ -444,7 +444,7 @@ function verifyCall(VerifyContext vc, CallInsn insn) returns err:Internal? {
 }
 
 function verifyCallIndirect(VerifyContext vc, CallIndirectInsn insn) returns err:Internal? {
-    t:FunctionSignature signature = <t:FunctionSignature>t:functionUnionSignature(vc.typeContext(), insn.operands[0].semType);
+    t:FunctionSignature signature = <t:FunctionSignature>t:complexFunctionSignature(vc.typeContext(), insn.operands[0].semType);
     return verifyFunctionCallArgs(vc, signature.paramTypes, insn);
 }
 

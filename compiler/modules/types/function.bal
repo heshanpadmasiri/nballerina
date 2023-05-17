@@ -65,8 +65,33 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
 }
 
 function createFunctionSignature(Context cx, SemType paramListType, SemType returnType) returns FunctionSignature {
-    ListAtomicType listAtom = <ListAtomicType>listAtomicType(cx, paramListType);
+    // paramListType may not be atomic
+    ListAtomicType listAtom;
+    ListAtomicType? lat = listAtomicType(cx, paramListType);
+    if lat != () {
+        listAtom = lat;
+    }
+    else {
+        ListAlternative[] alts = listAlternatives(cx, paramListType);
+        if alts.length() == 1 {
+            SemType semType = alts[0].semType;
+            listAtom = <ListAtomicType>listAtomicType(cx, semType);
+        }
+        else {
+            panic error("unexpected");
+        }
+    }
     SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
+    // FIXME: remove these sanity checks
+    foreach var [i, paramTy] in paramTypes.enumerate() {
+        if isSubtype(cx, paramTy, NEVER) {
+            panic error("unexpected param id" + i.toString());
+        }
+    }
+    if isSubtype(cx, returnType, NEVER) {
+        panic error("unexpected return type");
+    }
+
     SemType restInnerVal = cellInnerVal(listAtom.rest);
     SemType? restParamType = restInnerVal == NEVER ? () : restInnerVal;
     if restParamType != () {
@@ -76,7 +101,8 @@ function createFunctionSignature(Context cx, SemType paramListType, SemType retu
     return { returnType, paramTypes: paramTypes.cloneReadOnly(), restParamType };
 }
 
-public function functionUnionSignature(Context cx, SemType ty) returns FunctionSignature? {
+// TODO: this is more than union so we need a better name here
+public function complexFunctionSignature(Context cx, SemType ty) returns FunctionSignature? {
     FunctionAtomicType? atomic = functionAtomicType(cx, ty);
     if atomic != () {
         return functionSignature(cx, atomic);
@@ -91,23 +117,82 @@ public function functionUnionSignature(Context cx, SemType ty) returns FunctionS
     }
     BddPath[] paths = [];
     bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
-    FunctionAtomicType[] atomics = []; 
-    foreach var {pos, neg} in paths {
-        if neg.length() != 0 || pos.length() != 1 {
-            return ();
+    SemType domain = VAL;
+    // negatives don't affect the equation
+    foreach var {pos} in paths {
+        if pos.length() > 0 {
+            var [tmpDomain, _] = cx.functionAtomType(pos[0]);
+            foreach int i in 1..< pos.length() {
+                var [domain2, _] = cx.functionAtomType(pos[i]);
+                tmpDomain = union(tmpDomain, domain2);
+            }
+            domain = intersect(domain, tmpDomain);
         }
-        atomics.push(cx.functionAtomType(pos[0]));
     }
-    if atomics.length() == 0 {
-        return ();
+    SemType[] selectedCodomains = [];
+    foreach var {pos} in paths {
+        SemType[] codomains = [];
+        // TODO: proper start value?
+        SemType? currentlyCoveredDomain = ();
+        if pos.length() > 0 {
+            var intersections = allPossibleIntersectionsWithUptoNMembers(cx, pos, pos.length());
+            foreach var [d, c] in intersections {
+                if isEmpty(cx, intersect(d, domain)) {
+                    continue;
+                }
+                // FIXME: not sure exactly is this how to find the minimal
+                if currentlyCoveredDomain == () {
+                    currentlyCoveredDomain = d;
+                    codomains.push(c);
+                }
+                else {
+                    if !isEmpty(cx, diff(d, currentlyCoveredDomain)) {
+                        currentlyCoveredDomain = union(currentlyCoveredDomain, d);
+                        codomains.push(c);
+                    }
+                }
+            }
+        }
+        SemType tmp = codomains[0];
+        foreach int i in 1 ..< codomains.length() {
+            tmp = intersect(tmp, codomains[i]);
+        }
+        selectedCodomains.push(tmp);
     }
-    var [args, ret] = atomics[0];
-    foreach int i in 1..< atomics.length() {
-        var [args2, ret2] = atomics[i];
-        args = intersect(args2, args);
-        ret = union(ret2, ret);
+    if selectedCodomains.length() == 0 {
+        // this shouldn't happen ?
+        panic error("expect at least a single codomain");
     }
-    return createFunctionSignature(cx, args, ret);
+    SemType codomain = selectedCodomains[0];
+    foreach int i in 1 ..< selectedCodomains.length() {
+        codomain = union(codomain, selectedCodomains[i]);
+    }
+    return createFunctionSignature(cx, domain, codomain);
+}
+
+function allPossibleIntersectionsWithUptoNMembers(Context cx, Atom[] atoms, int n) returns [SemType, SemType][] {
+    if n == 1 {
+        return from var atom in atoms select cx.functionAtomType(atom);
+    }
+    if n == 2 {
+        [SemType, SemType][] result = [];
+        foreach int i in 0 ..< atoms.length() {
+            foreach int j in i + 1 ..< atoms.length() {
+                var [domain_i, codomain_i] = cx.functionAtomType(atoms[i]);
+                var [domain_j, codomain_j] = cx.functionAtomType(atoms[j]);
+                result.push([intersect(domain_i, domain_j), intersect(codomain_i, codomain_j)]);
+            }
+        }
+        return result;
+    }
+    var base = allPossibleIntersectionsWithUptoNMembers(cx, atoms, n - 1);
+    foreach var [domain, codomain] in base {
+        foreach Atom atom in atoms {
+            var [domain_i, codomain_i] = cx.functionAtomType(atom);
+            base.push([intersect(domain, domain_i), intersect(codomain, codomain_i)]);
+        }
+    }
+    return base;
 }
 
 public function functionSemType(Context cx, FunctionSignature signature) returns SemType {
