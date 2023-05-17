@@ -14,13 +14,13 @@ public function main() {
 
 function call(F|F2|F3 f) returns int {
     if f is F {
-        return f(1);
+      return f(1);
     }
     else if f is F2 {
-        return f(1, 2);
+      return f(1, 2);
     }
     else {
-        return f(1, 2, 3);
+      return f(1, 2, 3);
     }
 }
 

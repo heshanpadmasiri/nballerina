@@ -1,4 +1,5 @@
 // Implementation specific to basic type function.
+import wso2/nballerina.comm.err;
 
 // Function subtype is [args, ret]
 // Represents args as tuple type
@@ -72,14 +73,14 @@ function createFunctionSignature(Context cx, SemType paramListType, SemType retu
         listAtom = lat;
     }
     else {
+        // FIXME: not sure this is the correct way to do this
         ListAlternative[] alts = listAlternatives(cx, paramListType);
-        if alts.length() == 1 {
-            SemType semType = alts[0].semType;
-            listAtom = <ListAtomicType>listAtomicType(cx, semType);
+        if alts.length() != 1 {
+            panic err:impossible("ambiguous param list type");
         }
-        else {
-            panic error("unexpected");
-        }
+        SemType semType = alts[0].semType;
+        listAtom = <ListAtomicType>listAtomicType(cx, semType);
+        panic err:impossible("non atomic param list type");
     }
     SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
     // FIXME: remove these sanity checks
@@ -102,74 +103,62 @@ function createFunctionSignature(Context cx, SemType paramListType, SemType retu
 }
 
 // TODO: this is more than union so we need a better name here
+// TODO: change names to match our terminology (e.g. domain, codomain)
 public function complexFunctionSignature(Context cx, SemType ty) returns FunctionSignature? {
     FunctionAtomicType? atomic = functionAtomicType(cx, ty);
     if atomic != () {
         return functionSignature(cx, atomic);
     }
     SemType functionTy = intersect(ty, FUNCTION);
-    if isEmpty(cx, functionTy) {
-        return ();
-    }
-    if functionTy is BasicTypeBitSet {
-        // We can't call these so for our purposes this is fine
+    // only proper subtypes of function can have meaningful signatures
+    if isEmpty(cx, functionTy) || functionTy is BasicTypeBitSet {
         return ();
     }
     BddPath[] paths = [];
     bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
+    paths = paths.filter((each) => each.pos.length() > 0);
+    if paths.length() == 0 {
+        panic err:impossible("expect at least a single positive atom");
+    }
     SemType domain = VAL;
-    // negatives don't affect the equation
     foreach var {pos} in paths {
-        if pos.length() > 0 {
-            var [tmpDomain, _] = cx.functionAtomType(pos[0]);
-            foreach int i in 1..< pos.length() {
-                var [domain2, _] = cx.functionAtomType(pos[i]);
-                tmpDomain = union(tmpDomain, domain2);
-            }
-            domain = intersect(domain, tmpDomain);
-        }
+        SemType[] pathDomains = from var atom in pos select cx.functionAtomType(atom)[0];
+        domain = intersect(domain, pathDomains.reduce(union, pathDomains[0]));
     }
     SemType[] selectedCodomains = [];
     foreach var {pos} in paths {
         SemType[] codomains = [];
         // TODO: proper start value?
         SemType? currentlyCoveredDomain = ();
-        if pos.length() > 0 {
-            var intersections = allPossibleIntersectionsWithUptoNMembers(cx, pos, pos.length());
-            foreach var [d, c] in intersections {
-                if isEmpty(cx, intersect(d, domain)) {
-                    continue;
-                }
-                // FIXME: not sure exactly is this how to find the minimal
-                if currentlyCoveredDomain == () {
-                    currentlyCoveredDomain = d;
+        var intersections = allPossibleIntersectionsWithUptoNMembers(cx, pos, pos.length());
+        foreach var [d, c] in intersections {
+            if isEmpty(cx, intersect(d, domain)) {
+                continue;
+            }
+            // FIXME: not sure exactly, is this how to find the minimal
+            if currentlyCoveredDomain == () {
+                currentlyCoveredDomain = d;
+                codomains.push(c);
+            }
+            else {
+                // Check if this domain cover something not already covered
+                if !isEmpty(cx, diff(d, currentlyCoveredDomain)) {
+                    currentlyCoveredDomain = union(currentlyCoveredDomain, d);
                     codomains.push(c);
-                }
-                else {
-                    if !isEmpty(cx, diff(d, currentlyCoveredDomain)) {
-                        currentlyCoveredDomain = union(currentlyCoveredDomain, d);
-                        codomains.push(c);
-                    }
                 }
             }
         }
-        SemType tmp = codomains[0];
-        foreach int i in 1 ..< codomains.length() {
-            tmp = intersect(tmp, codomains[i]);
-        }
-        selectedCodomains.push(tmp);
+        selectedCodomains.push(codomains.reduce(intersect, codomains[0]));
     }
     if selectedCodomains.length() == 0 {
         // this shouldn't happen ?
-        panic error("expect at least a single codomain");
+        panic err:impossible("expect at least a single codomain");
     }
-    SemType codomain = selectedCodomains[0];
-    foreach int i in 1 ..< selectedCodomains.length() {
-        codomain = union(codomain, selectedCodomains[i]);
-    }
-    return createFunctionSignature(cx, domain, codomain);
+    return createFunctionSignature(cx, domain, selectedCodomains.reduce(union, selectedCodomains[0]));
 }
 
+// TODO: better name: we are trying to generate all possible intersections of the pos atoms
+// also this is not efficient since we ignore the intersection of codomains if domain don't meed requirements
 function allPossibleIntersectionsWithUptoNMembers(Context cx, Atom[] atoms, int n) returns [SemType, SemType][] {
     if n == 1 {
         return from var atom in atoms select cx.functionAtomType(atom);
