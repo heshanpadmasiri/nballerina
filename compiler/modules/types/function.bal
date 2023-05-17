@@ -66,22 +66,23 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
 }
 
 function createFunctionSignature(Context cx, SemType paramListType, SemType returnType) returns FunctionSignature {
-    ListAtomicType listAtom = <ListAtomicType>listAtomicType(cx, paramListType);
-    // paramListType may not be atomic?
-    // ListAtomicType? lat = listAtomicType(cx, paramListType);
-    // if lat != () {
-    //     listAtom = lat;
-    // }
-    // else {
-    //     // FIXME: not sure this is the correct way to do this
-    //     ListAlternative[] alts = listAlternatives(cx, paramListType);
-    //     if alts.length() != 1 {
-    //         panic err:impossible("ambiguous param list type");
-    //     }
-    //     SemType semType = alts[0].semType;
-    //     listAtom = <ListAtomicType>listAtomicType(cx, semType);
-    //     panic err:impossible("non atomic param list type");
-    // }
+    ListAtomicType listAtom;
+    // param list type is not atomic when the handling function intersections
+    ListAtomicType? lat = listAtomicType(cx, paramListType);
+    if lat != () {
+        listAtom = lat;
+    }
+    else {
+        // FIXME: not sure this is the correct way to do this
+        ListAlternative[] alts = listAlternatives(cx, paramListType);
+        // we are going to get ambiguous param list types here (how to handle it)
+        // if alts.length() != 1 {
+        //     panic err:impossible("ambiguous param list type");
+        // }
+        SemType semType = alts[0].semType;
+        listAtom = <ListAtomicType>listAtomicType(cx, semType);
+        // panic err:impossible("non atomic param list type");
+    }
     SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
     // FIXME: remove these sanity checks
     foreach var [i, paramTy] in paramTypes.enumerate() {
@@ -174,14 +175,14 @@ function allPossibleIntersectionsWithUptoNMembers(Context cx, Atom[] atoms, int 
         }
         return result;
     }
-    var base = allPossibleIntersectionsWithUptoNMembers(cx, atoms, n - 1);
-    foreach var [domain, codomain] in base {
+    [SemType, SemType][] result = allPossibleIntersectionsWithUptoNMembers(cx, atoms, n - 1);
+    foreach var [domain, codomain] in result {
         foreach Atom atom in atoms {
             var [domain_i, codomain_i] = cx.functionAtomType(atom);
-            base.push([intersect(domain, domain_i), intersect(codomain, codomain_i)]);
+            result.push([intersect(domain, domain_i), intersect(codomain, codomain_i)]);
         }
     }
-    return base;
+    return result;
 }
 
 public function functionSemType(Context cx, FunctionSignature signature) returns SemType {
