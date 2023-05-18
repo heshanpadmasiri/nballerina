@@ -4,9 +4,11 @@ type F2 function(int) returns string;
 
 public function main() {
     F1|F2 f = foo;
-    io:println(f(5)); // @output 5
+    int|string ret = f(5);
+    io:println(ret); // @output 5
     f = bar;
-    io:println(f(5)); // @output hello
+    ret = f(5);
+    io:println(ret); // @output hello
 }
 
 function foo(int x) returns int {

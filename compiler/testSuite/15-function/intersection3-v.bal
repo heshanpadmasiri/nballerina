@@ -11,5 +11,5 @@ public function main() {
 }
 
 function foo(int... args) returns byte {
-  return 0;
+    return 0;
 }

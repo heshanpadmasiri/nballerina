@@ -25,13 +25,13 @@ function call(F|F2|F3 f) returns int {
 }
 
 function f1(int i) returns int {
-  return i;
+    return i;
 }
 
 function f2(int i, int j) returns int {
-  return i + j;
+    return i + j;
 }
 
 function f3(int i, int j, int k) returns int {
-  return i + j + k;
+    return i + j + k;
 }

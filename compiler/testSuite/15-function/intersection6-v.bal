@@ -7,9 +7,13 @@ type Fx F1&F2;
 public function main() {
     Fx fx = foo;
     int r1 = fx(1);
-    io:println(r1); // @output 1
+    io:println(r1); // @output 2
+    io:println(fx("a")); // @output 0
 }
 
-function foo(any a) returns int {
-    return 1;
+function foo(int|string a) returns int {
+    if a is string {
+        return 0;
+    }
+    return a + 1;
 }
