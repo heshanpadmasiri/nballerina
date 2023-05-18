@@ -1400,7 +1400,7 @@ function codeGenFunctionCallExpr(ExprContext cx, bir:BasicBlock bb, s:FunctionCa
             t:SemType semType = ref.reg.semType;
             t:FunctionSignature? refSignature = t:complexFunctionSignature(cx.mod.tc, semType);
             if refSignature == () {
-                if t:isSubtype(cx.mod.tc, semType, t:FUNCTION) {
+                if t:isSameType(cx.mod.tc, semType, t:FUNCTION) {
                     return cx.semanticErr("only values of proper subtype of function can be called", expr.qNamePos);
                 }
                 return cx.semanticErr("only a value of function type can be called", expr.qNamePos);

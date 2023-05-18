@@ -94,14 +94,15 @@ public function complexFunctionSignature(Context cx, SemType ty) returns Functio
         SemType currentlyCoveredDomain = NEVER;
         // not sure if the order of intersections matters, reverse starts with the smallest intersection
         var intersections = allPossibleIntersectionsWithUptoNMembers(cx, pos, pos.length()).reverse();
-        foreach var [d, c] in intersections {
-            if isEmpty(cx, intersect(d, domain)) {
+        foreach var [intersection_domain, intersection_codomain] in intersections {
+            SemType overlappingDomain = intersect(domain, intersection_domain);
+            if isEmpty(cx, overlappingDomain) {
                 continue;
             }
-            // Check if this domain cover something not already covered
-            if !isEmpty(cx, diff(d, currentlyCoveredDomain)) {
-                currentlyCoveredDomain = union(currentlyCoveredDomain, d);
-                codomains.push(c);
+            // Check if this domain cover something in domain not already covered
+            if !isEmpty(cx, diff(overlappingDomain, currentlyCoveredDomain)) {
+                currentlyCoveredDomain = union(overlappingDomain, currentlyCoveredDomain);
+                codomains.push(intersection_codomain);
             }
         }
         if codomains.length() > 0 {
