@@ -5,11 +5,11 @@ type F2 function(string) returns int;
 type Fx F1&F2;
 
 public function main() {
-    Fx fx = foo; // @error
+    Fx fx = foo;
     int r1 = fx(1);
-    io:println(r1);
+    io:println(r1); // @output 1
 }
 
-function foo(int a) returns int {
-    return a + 1;
+function foo(any a) returns int {
+    return 1;
 }

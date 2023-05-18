@@ -65,18 +65,75 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
     return signature;
 }
 
-function createFunctionSignature(Context cx, SemType paramListType, SemType returnType) returns FunctionSignature {
-    var [paramTypes, restType] = deconstructParamType(cx, paramListType);
-    // FIXME: remove these sanity checks
-    foreach var [i, paramTy] in paramTypes.enumerate() {
-        if isSubtype(cx, paramTy, NEVER) {
-            panic error("unexpected param id" + i.toString());
+// TODO: change names to match our terminology (e.g. domain, codomain)
+public function complexFunctionSignature(Context cx, SemType ty) returns FunctionSignature? {
+    FunctionAtomicType? atomic = functionAtomicType(cx, ty);
+    if atomic != () {
+        return functionSignature(cx, atomic);
+    }
+    SemType functionTy = intersect(ty, FUNCTION);
+    // only proper subtypes of function can have meaningful signatures
+    if isEmpty(cx, functionTy) || functionTy is BasicTypeBitSet {
+        return ();
+    }
+    BddPath[] paths = [];
+    bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
+    // only positive atoms have an effect on the equation
+    paths = paths.filter((each) => each.pos.length() > 0);
+    if paths.length() == 0 {
+        panic err:impossible("expect at least a single positive atom");
+    }
+    SemType domain = VAL;
+    foreach var {pos} in paths {
+        SemType[] pathDomains = from var atom in pos select cx.functionAtomType(atom)[0];
+        domain = intersect(domain, pathDomains.reduce(union, pathDomains[0]));
+    }
+    SemType[] selectedCodomains = [];
+    foreach var {pos} in paths {
+        SemType[] codomains = [];
+        SemType currentlyCoveredDomain = NEVER;
+        // not sure if the order of intersections matters, reverse starts with the smallest intersection
+        var intersections = allPossibleIntersectionsWithUptoNMembers(cx, pos, pos.length()).reverse();
+        foreach var [d, c] in intersections {
+            if isEmpty(cx, intersect(d, domain)) {
+                continue;
+            }
+            // Check if this domain cover something not already covered
+            if !isEmpty(cx, diff(d, currentlyCoveredDomain)) {
+                currentlyCoveredDomain = union(currentlyCoveredDomain, d);
+                codomains.push(c);
+            }
+        }
+        if codomains.length() > 0 {
+            selectedCodomains.push(codomains.reduce(intersect, codomains[0]));
         }
     }
-    // if isSubtype(cx, returnType, NEVER) {
-    //     panic error("unexpected return type");
-    // }
+    if selectedCodomains.length() == 0 {
+        // I don't think this is possible since domain must contain at least the domains of individual the functions
+        panic err:impossible("expect at least a single codomain");
+    }
+    return createFunctionSignature(cx, domain, selectedCodomains.reduce(union, selectedCodomains[0]));
+}
 
+// TODO: better name: we are trying to generate all possible intersections of the pos atoms
+// also this is not efficient since we ignore the intersection of codomains if domain don't meet requirements
+function allPossibleIntersectionsWithUptoNMembers(Context cx, Atom[] atoms, int n) returns [SemType, SemType][] {
+    if n == 1 {
+        // cloneWithType to remove the readonly part from functionAtomType
+        return from var atom in atoms select checkpanic cx.functionAtomType(atom).cloneWithType([SemType, SemType]);
+    }
+    [SemType, SemType][] result = allPossibleIntersectionsWithUptoNMembers(cx, atoms, n - 1);
+    foreach var [domain, codomain] in result {
+        foreach Atom atom in atoms {
+            var [domain_i, codomain_i] = cx.functionAtomType(atom);
+            result.push([intersect(domain, domain_i), intersect(codomain, codomain_i)]);
+        }
+    }
+    return result;
+}
+
+function createFunctionSignature(Context cx, SemType paramListType, SemType returnType) returns FunctionSignature {
+    var [paramTypes, restType] = deconstructParamType(cx, paramListType);
     SemType? restParamType = restType == NEVER ? () : restType;
     if restParamType != () {
         ListDefinition listDefn = new;
@@ -96,6 +153,7 @@ function deconstructParamType(Context cx, SemType paramListType) returns [SemTyp
     // What I need,
     // * number of fixed params
     // * rest param type
+    // actual type is a union of the alternatives
     ListAlternative[] alts = listAlternatives(cx, paramListType);
     ListAtomicType[] listAtoms = [];
     SemType[] restTypes = [];
@@ -118,92 +176,6 @@ function deconstructParamType(Context cx, SemType paramListType) returns [SemTyp
     return [paramTypes, restTypes.reduce(union, restTypes[0])];
 }
 
-// TODO: this is more than union so we need a better name here
-// TODO: change names to match our terminology (e.g. domain, codomain)
-public function complexFunctionSignature(Context cx, SemType ty) returns FunctionSignature? {
-    FunctionAtomicType? atomic = functionAtomicType(cx, ty);
-    if atomic != () {
-        return functionSignature(cx, atomic);
-    }
-    SemType functionTy = intersect(ty, FUNCTION);
-    // only proper subtypes of function can have meaningful signatures
-    if isEmpty(cx, functionTy) || functionTy is BasicTypeBitSet {
-        return ();
-    }
-    BddPath[] paths = [];
-    bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
-    paths = paths.filter((each) => each.pos.length() > 0);
-    if paths.length() == 0 {
-        panic err:impossible("expect at least a single positive atom");
-    }
-    SemType domain = VAL;
-    foreach var {pos} in paths {
-        SemType[] pathDomains = from var atom in pos select cx.functionAtomType(atom)[0];
-        domain = intersect(domain, pathDomains.reduce(union, pathDomains[0]));
-    }
-    SemType[] selectedCodomains = [];
-    foreach var {pos} in paths {
-        SemType[] codomains = [];
-        // TODO: proper start value?
-        SemType? currentlyCoveredDomain = ();
-        var intersections = allPossibleIntersectionsWithUptoNMembers(cx, pos, pos.length());
-        foreach var [d, c] in intersections {
-            if isEmpty(cx, intersect(d, domain)) {
-                continue;
-            }
-            // FIXME: not sure exactly, is this how to find the minimal
-            if currentlyCoveredDomain == () {
-                currentlyCoveredDomain = d;
-                codomains.push(c);
-            }
-            else {
-                // Check if this domain cover something not already covered
-                if !isEmpty(cx, diff(d, currentlyCoveredDomain)) {
-                    currentlyCoveredDomain = union(currentlyCoveredDomain, d);
-                    codomains.push(c);
-                }
-            }
-        }
-        if codomains.length() > 0 {
-            selectedCodomains.push(codomains.reduce(intersect, codomains[0]));
-        }
-    }
-    if selectedCodomains.length() == 0 {
-        // this can happen when you make an invalid function intersections (eg: (int) returns T1 & (string) returns T2))
-        // then non of the functions will have their domains as part of the resultant functions domain
-        // thus there is codomain
-        // FIXME: we should show a proper error for this
-        return ();
-    }
-    return createFunctionSignature(cx, domain, selectedCodomains.reduce(union, selectedCodomains[0]));
-}
-
-// TODO: better name: we are trying to generate all possible intersections of the pos atoms
-// also this is not efficient since we ignore the intersection of codomains if domain don't meed requirements
-function allPossibleIntersectionsWithUptoNMembers(Context cx, Atom[] atoms, int n) returns [SemType, SemType][] {
-    if n == 1 {
-        return from var atom in atoms select cx.functionAtomType(atom);
-    }
-    if n == 2 {
-        [SemType, SemType][] result = [];
-        foreach int i in 0 ..< atoms.length() {
-            foreach int j in i + 1 ..< atoms.length() {
-                var [domain_i, codomain_i] = cx.functionAtomType(atoms[i]);
-                var [domain_j, codomain_j] = cx.functionAtomType(atoms[j]);
-                result.push([intersect(domain_i, domain_j), intersect(codomain_i, codomain_j)]);
-            }
-        }
-        return result;
-    }
-    [SemType, SemType][] result = allPossibleIntersectionsWithUptoNMembers(cx, atoms, n - 1);
-    foreach var [domain, codomain] in result {
-        foreach Atom atom in atoms {
-            var [domain_i, codomain_i] = cx.functionAtomType(atom);
-            result.push([intersect(domain, domain_i), intersect(codomain, codomain_i)]);
-        }
-    }
-    return result;
-}
 
 public function functionSemType(Context cx, FunctionSignature signature) returns SemType {
     FunctionTypeMemo? memo = cx.functionAtomicTypeMemo[signature];
