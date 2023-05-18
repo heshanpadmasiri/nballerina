@@ -84,12 +84,12 @@ public function complexFunctionSignature(Context cx, SemType ty) returns Functio
         panic err:impossible("expect at least a single positive atom");
     }
     SemType domain = VAL;
-    foreach var {pos} in paths {
+    foreach var { pos } in paths {
         SemType[] pathDomains = from var atom in pos select cx.functionAtomType(atom)[0];
         domain = intersect(domain, pathDomains.reduce(union, pathDomains[0]));
     }
     SemType[] selectedCodomains = [];
-    foreach var {pos} in paths {
+    foreach var { pos } in paths {
         SemType[] codomains = [];
         SemType currentlyCoveredDomain = NEVER;
         // not sure if the order of intersections matters, reverse starts with the smallest intersection
@@ -170,13 +170,12 @@ function deconstructParamType(Context cx, SemType paramListType) returns [SemTyp
         }
     }
     SemType[] paramTypes = [];
-    foreach int i in 0..<fixedLength {
+    foreach int i in 0 ..< fixedLength {
         SemType[] types = from var atom in listAtoms select listAtomicTypeMemberAtInnerVal(atom, i);
         paramTypes.push(types.reduce(union, types[0]));
     }
     return [paramTypes, restTypes.reduce(union, restTypes[0])];
 }
-
 
 public function functionSemType(Context cx, FunctionSignature signature) returns SemType {
     FunctionTypeMemo? memo = cx.functionAtomicTypeMemo[signature];
