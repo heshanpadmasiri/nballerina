@@ -27,7 +27,8 @@ final llvm:StructType LLVM_FUNCTION_SIGNATURE = llvm:structType([llvm:pointerTyp
                                                                  LLVM_INT,
                                                                  llvm:pointerType(LLVM_MEMBER_TYPE)]);
 
-final llvm:StructType LLVM_FUNCTION_VALUE = llvm:structType([llvm:pointerType(llvm:functionType("void", [])), llvm:pointerType(LLVM_FUNCTION_SIGNATURE)]);
+final llvm:StructType LLVM_FUNCTION_VALUE = llvm:structType([llvm:pointerType(llvm:functionType("void", [])),
+                                                             llvm:pointerType(LLVM_FUNCTION_SIGNATURE)]);
 final llvm:PointerType LLVM_FUNCTION_PTR = llvm:pointerType(LLVM_FUNCTION_VALUE, 1);
 
 // This is an approximation, to share type between init.bal and types.bal
@@ -204,26 +205,22 @@ function buildRuntimeFunctionCall(llvm:Builder builder, Scaffold|InitModuleConte
     if context is Scaffold {
         return <llvm:Value>buildFunctionCall(builder, context, context.getRuntimeFunctionDecl(rf), args);
     }
-    else {
-        return <llvm:Value>buildInitRuntimeFunctionCall(builder, <InitModuleContext>context, rf, args);
-    }
+    return <llvm:Value>buildInitRuntimeFunctionCall(builder, <InitModuleContext>context, rf, args);
 }
 
 function buildVoidRuntimeFunctionCall(llvm:Builder builder, Scaffold|InitModuleContext context, RuntimeFunction rf, llvm:Value[] args) {
     if context is Scaffold {
         return <()>buildFunctionCall(builder, context, context.getRuntimeFunctionDecl(rf), args);
     }
-    else {
-        return <()>buildInitRuntimeFunctionCall(builder, <InitModuleContext>context, rf, args);
-    }
+    return <()>buildInitRuntimeFunctionCall(builder, <InitModuleContext>context, rf, args);
 }
 
 function buildUntagInt(llvm:Builder builder, Scaffold|InitModuleContext context, llvm:PointerValue tagged) returns llvm:Value {
     return buildRuntimeFunctionCall(builder, context, taggedToIntFunction, [tagged]);
 }
 
-function buildUntagFloat(llvm:Builder builder, Scaffold|InitModuleContext scaffold, llvm:PointerValue tagged) returns llvm:Value {
-    return buildRuntimeFunctionCall(builder, scaffold, taggedToFloatFunction, [tagged]);
+function buildUntagFloat(llvm:Builder builder, Scaffold|InitModuleContext context, llvm:PointerValue tagged) returns llvm:Value {
+    return buildRuntimeFunctionCall(builder, context, taggedToFloatFunction, [tagged]);
 }
 
 function buildUntagBoolean(llvm:Builder builder, llvm:PointerValue tagged) returns llvm:Value {
