@@ -211,24 +211,25 @@ function createFunctionSignatureType(t:FunctionSignature signature) returns llvm
     ]);
 }
 
-function buildUniformCallFunction(InitModuleContext cx, t:FunctionSignature signature, llvm:Builder builder, string name) returns llvm:Function {
+function buildUniformCallFunction(InitModuleContext cx, t:FunctionSignature signature,
+                                  llvm:Builder builder, string name) returns llvm:Function {
     llvm:FunctionDefn func = cx.llMod.addFunctionDefn(name, LLVM_UNIFORM_CALL_FUNC_TY);
     llvm:BasicBlock bb = func.appendBasicBlock();
     builder.positionAtEnd(bb);
     llvm:PointerValue[] exactArgs = from t:SemType paramType in signature.paramTypes select
-                                        builder.alloca(exactArgTransformerResultTy(paramType));
+                                        builder.alloca(exactArgType(paramType));
     llvm:PointerValue uniformArgArray = <llvm:PointerValue>func.getParam(0);
     int nRequiredParams = requiredParamCount(signature);
     foreach int i in 0 ..< nRequiredParams {
         llvm:PointerValue uniformArg = <llvm:PointerValue>builder.load(builder.getElementPtr(uniformArgArray,
-                                                                                            [constIndex(cx, i)]));
-        ExactArgConvertFn transformFn = exactArgConvertFn(signature.paramTypes[i]);
-        llvm:Value arg = transformFn(builder, cx, uniformArg);
+                                                                                             [constIndex(cx, i)]));
+        llvm:Value arg = convertToExactArg(builder, cx, uniformArg, signature.paramTypes[i]);
         builder.store(arg, exactArgs[i]);
     }
     if signature.restParamType != () {
         llvm:PointerValue restArgArrayPtr = exactArgs[nRequiredParams];
-        builder.store(createExactCallRestArgList(cx, builder, signature.paramTypes[nRequiredParams], name), restArgArrayPtr);
+        builder.store(createExactCallRestArgList(cx, builder, signature.paramTypes[nRequiredParams], name),
+                      restArgArrayPtr);
         llvm:Value startingOffset = constInt(cx, nRequiredParams);
         llvm:Value restArgCount = builder.iArithmeticWrap("sub", func.getParam(1), startingOffset);
         buildVoidRuntimeFunctionCall(builder, cx, addUniformArgsToRestArgsFunction, [uniformArgArray,
@@ -240,66 +241,49 @@ function buildUniformCallFunction(InitModuleContext cx, t:FunctionSignature sign
     llvm:Value? retValue = builder.call(builder.bitCast(<llvm:PointerValue>func.getParam(2), llvm:pointerType(fnTy)),
                                         from var each in exactArgs select builder.load(each));
     if retValue !is () {
-        llvm:PointerValue retRegister = <llvm:PointerValue>func.getParam(4);
-        llvm:BasicBlock taggedReturnBb = func.appendBasicBlock();
-        llvm:BasicBlock unTaggedReturnBb = func.appendBasicBlock();
-        llvm:BasicBlock finalBb = func.appendBasicBlock();
-        builder.condBr(func.getParam(3), taggedReturnBb, unTaggedReturnBb);
-        builder.positionAtEnd(unTaggedReturnBb);
-        builder.store(retValue, builder.bitCast(retRegister, llvm:pointerType(<llvm:Type>fnTy.returnType)));
-        builder.br(finalBb);
-
-        builder.positionAtEnd(taggedReturnBb);
-        TaggedBuildFn transformFn = buildTaggedValueFn(signature.returnType);
-        builder.store(transformFn(builder, cx, retValue), retRegister);
-        builder.br(finalBb);
-
-        builder.positionAtEnd(finalBb);
+        builder.ret(convertToTaggedValue(builder, cx, retValue, signature.returnType));
     }
-    builder.ret();
+    else {
+        builder.ret(constNilTaggedPtr(cx));
+    }
     return func;
 }
 
 function requiredParamCount(t:FunctionSignature signature) returns int {
-    return signature.restParamType == () ? signature.paramTypes.length() : signature.paramTypes.length() - 1;
+    return signature.restParamType == () ? signature.paramTypes.length() :
+                                           signature.paramTypes.length() - 1;
 }
 
-type ExactArgConvertFn function(llvm:Builder builder, Scaffold|InitModuleContext context, llvm:PointerValue arg) returns llvm:Value;
-type TaggedBuildFn function(llvm:Builder builder, Scaffold|InitModuleContext context, llvm:Value arg) returns llvm:Value;
-
-function exactArgConvertFn(t:SemType ty) returns ExactArgConvertFn {
+function convertToExactArg(llvm:Builder builder, InitModuleContext context,
+                           llvm:PointerValue arg, t:SemType ty) returns llvm:Value {
     t:BasicTypeBitSet w = t:widenToBasicTypes(ty);
     if t:isSubtypeSimple(w, t:INT) {
-        return buildUntagInt;
+        return buildUntagInt(builder, context, arg);
     }
     else if t:isSubtypeSimple(ty, t:FLOAT) {
-        return buildUntagFloat;
+        return buildUntagFloat(builder, context, arg);
     }
     else if t:isSubtypeSimple(ty, t:BOOLEAN) {
-        return (builder, context, arg) => buildUntagBoolean(builder, arg);
+        return buildUntagBoolean(builder, arg);
     }
-    else {
-        return (builder, context, arg) => arg;
-    }
+    return arg;
 }
 
-function buildTaggedValueFn(t:SemType ty) returns TaggedBuildFn {
+function convertToTaggedValue(llvm:Builder builder, InitModuleContext context, llvm:Value arg, t:SemType ty) returns llvm:Value {
     t:BasicTypeBitSet w = t:widenToBasicTypes(ty);
     if t:isSubtypeSimple(w, t:INT) {
-        return buildTaggedInt;
+        return buildTaggedInt(builder, context, arg);
     }
     else if t:isSubtypeSimple(ty, t:FLOAT) {
-        return buildTaggedFloat;
+        return buildTaggedFloat(builder, context, arg);
     }
     else if t:isSubtypeSimple(ty, t:BOOLEAN) {
-        return buildTaggedBoolean;
+        return buildTaggedBoolean(builder, context, arg);
     }
-    else {
-        return (builder, context, arg) => arg;
-    }
+    return arg;
 }
 
-function exactArgTransformerResultTy(t:SemType ty) returns llvm:SingleValueType {
+function exactArgType(t:SemType ty) returns llvm:SingleValueType {
     t:BasicTypeBitSet w = t:widenToBasicTypes(ty);
     if t:isSubtypeSimple(w, t:INT) {
         return LLVM_INT;
@@ -310,9 +294,7 @@ function exactArgTransformerResultTy(t:SemType ty) returns llvm:SingleValueType 
     else if t:isSubtypeSimple(ty, t:BOOLEAN) {
         return LLVM_BOOLEAN;
     }
-    else {
-        return LLVM_TAGGED_PTR;
-    }
+    return LLVM_TAGGED_PTR;
 }
 
 function createExactCallRestArgList(InitModuleContext cx, llvm:Builder builder, t:SemType listTy, string name) returns llvm:PointerValue {

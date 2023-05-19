@@ -17,11 +17,10 @@ const LLVM_PANIC_CODE = "i64";
 final llvm:StructType llTypeIdDescType = llvm:structType([LLVM_TID]);
 final llvm:PointerType llTypeIdDescPtrType = llvm:pointerType(llTypeIdDescType);
 
-final llvm:FunctionType LLVM_UNIFORM_CALL_FUNC_TY = llvm:functionType("void", [llvm:pointerType(LLVM_TAGGED_PTR),
-                                                                               "i64",
-                                                                               llvm:pointerType(llvm:functionType("void", [])),
-                                                                               LLVM_BOOLEAN,
-                                                                               llvm:pointerType(LLVM_TAGGED_PTR)]);
+final llvm:FunctionType LLVM_UNIFORM_CALL_FUNC_TY = llvm:functionType(LLVM_TAGGED_PTR,
+                                                                      [llvm:pointerType(LLVM_TAGGED_PTR),
+                                                                       "i64",
+                                                                       llvm:pointerType(llvm:functionType("void", []))]);
 final llvm:StructType LLVM_FUNCTION_SIGNATURE = llvm:structType([llvm:pointerType(LLVM_UNIFORM_CALL_FUNC_TY),
                                                                  LLVM_MEMBER_TYPE,
                                                                  LLVM_MEMBER_TYPE,
