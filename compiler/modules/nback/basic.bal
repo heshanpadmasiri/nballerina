@@ -230,12 +230,27 @@ function buildCall(llvm:Builder builder, Scaffold scaffold, bir:CallInsn insn) r
 }
 
 function buildCallIndirect(llvm:Builder builder, Scaffold scaffold, bir:CallIndirectInsn insn) returns BuildError? {
-    t:FunctionSignature signature = <t:FunctionSignature>t:complexFunctionSignature(scaffold.typeContext(), insn.operands[0].semType);
+    t:Context tc = scaffold.typeContext();
+    t:SemType[] paramTypes;
+    t:SemType returnType;
+    t:SemType? restParamType;
+    t:SemType funcTy = insn.operands[0].semType;
+    t:FunctionAtomicType? atomic = t:functionAtomicType(tc, funcTy);
+    if atomic != () {
+        { paramTypes, returnType, restParamType } = t:functionSignature(tc, atomic);
+    }
+    else {
+        paramTypes = from int i in 1 ..< insn.operands.length() select insn.operands[i].semType;
+        returnType = <t:SemType>t:functionReturnType(tc, funcTy, t:tupleTypeWrapped(tc.env, ...paramTypes));
+        restParamType = ();
+    }
+    // TODO: refactor these functions to work without a signature
+    t:FunctionSignature signature = { paramTypes: paramTypes.cloneReadOnly(), returnType, restParamType };
     llvm:PointerType fnStructPtrTy = llvm:pointerType(functionValueType(signature));
+    llvm:ConstPointerValue llSignature = scaffold.getFunctionSignatureValue(signature);
     llvm:PointerValue unTaggedPtr = <llvm:PointerValue>builder.call(scaffold.getIntrinsicFunction("ptrmask.p1.i64"),
                                                                     [<llvm:PointerValue>builder.load(scaffold.address(insn.operands[0])),
                                                                      constInt(scaffold, POINTER_MASK)]);
-    llvm:ConstPointerValue llSignature = scaffold.getFunctionSignatureValue(signature);
     llvm:Value isExact = buildRuntimeFunctionCall(builder, scaffold, functionIsExactFunction,
                                                   [llSignature, builder.bitCast(unTaggedPtr, LLVM_FUNCTION_PTR)]);
     llvm:PointerValue funcStructPtr = builder.bitCast(builder.addrSpaceCast(unTaggedPtr,
@@ -246,15 +261,15 @@ function buildCallIndirect(llvm:Builder builder, Scaffold scaffold, bir:CallIndi
     llvm:BasicBlock afterCall = scaffold.addBasicBlock();
     builder.condBr(isExact, ifExact, ifNotExact);
     builder.positionAtEnd(ifExact);
-    check buildExactCall(builder, scaffold, insn, afterCall, funcStructPtr, signature);
+    check buildExactCall(builder, scaffold, insn, afterCall, funcStructPtr, paramTypes, returnType);
     builder.positionAtEnd(ifNotExact);
-    check buildNotExactCall(builder, scaffold, insn, afterCall, funcStructPtr, signature);
+    check buildNotExactCall(builder, scaffold, insn, afterCall, funcStructPtr, paramTypes, restParamType, returnType);
     builder.positionAtEnd(afterCall);
 }
 
 function buildExactCall(llvm:Builder builder, Scaffold scaffold, bir:CallIndirectInsn insn,
-                        llvm:BasicBlock afterCall, llvm:PointerValue funcStructPtr, t:FunctionSignature signature) returns BuildError? {
-    var { returnType, paramTypes } = signature;
+                        llvm:BasicBlock afterCall, llvm:PointerValue funcStructPtr,
+                        t:SemType[] paramTypes, t:SemType returnType) returns BuildError? {
     llvm:Value[] args = check buildFunctionCallArgs(builder, scaffold, paramTypes, paramTypes,
                                                     from int i in 1 ..< insn.operands.length() select insn.operands[i]);
     llvm:PointerValue fnGlobalPtr = builder.getElementPtr(funcStructPtr, [constIndex(scaffold, 0),
@@ -267,8 +282,8 @@ function buildExactCall(llvm:Builder builder, Scaffold scaffold, bir:CallIndirec
 }
 
 function buildNotExactCall(llvm:Builder builder, Scaffold scaffold, bir:CallIndirectInsn insn,
-                           llvm:BasicBlock afterCall, llvm:PointerValue funcStructPtr, t:FunctionSignature signature) returns BuildError? {
-    var { returnType, paramTypes, restParamType } = signature;
+                           llvm:BasicBlock afterCall, llvm:PointerValue funcStructPtr,
+                           t:SemType[] paramTypes, t:SemType? restParamType, t:SemType returnType) returns BuildError? {
     int requiredArgCount = restParamType == () ? paramTypes.length() : paramTypes.length() - 1;
     // converting to TaggedRepr always return a pointer value
     llvm:PointerValue[] uniformArgs = from int i in 1 ..< requiredArgCount + 1

@@ -59,20 +59,24 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
     if memo != () {
         return memo.signature;
     }
-    var [paramTy, returnTy] = atomic;
-    FunctionSignature signature = createFunctionSignature(cx, paramTy, returnTy);
+    var [argList, returnType] = atomic;
+    ListAtomicType listAtom = <ListAtomicType>listAtomicType(cx, argList);
+    SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
+    SemType restInnerVal = cellInnerVal(listAtom.rest);
+    SemType? restParamType = restInnerVal == NEVER ? () : restInnerVal;
+    if restParamType != () {
+        ListDefinition listDefn = new;
+        paramTypes.push(defineListTypeWrapped(listDefn, cx.env, rest=restInnerVal));
+    }
+    FunctionSignature signature = { returnType, paramTypes: paramTypes.cloneReadOnly(), restParamType };
     cx.functionSignatureMemo.add({ atomic, signature });
     return signature;
 }
 
-// TODO: change names to match our terminology (e.g. domain, codomain)
-public function complexFunctionSignature(Context cx, SemType ty) returns FunctionSignature? {
-    FunctionAtomicType? atomic = functionAtomicType(cx, ty);
-    if atomic != () {
-        return functionSignature(cx, atomic);
-    }
-    SemType functionTy = intersect(ty, FUNCTION);
-    // only proper subtypes of function can have meaningful signatures
+// TODO: check if the function is well typed
+public function functionReturnType(Context cx, SemType funcTy, SemType argTy) returns SemType? {
+    SemType functionTy = intersect(funcTy, FUNCTION);
+    // Since we can only call proper subtypes of function it is safe to ignore handling base type as well
     if isEmpty(cx, functionTy) || functionTy is BasicTypeBitSet {
         return ();
     }
@@ -83,11 +87,6 @@ public function complexFunctionSignature(Context cx, SemType ty) returns Functio
     if paths.length() == 0 {
         panic err:impossible("expect at least a single positive atom");
     }
-    SemType domain = VAL;
-    foreach var { pos } in paths {
-        SemType[] pathDomains = from var atom in pos select cx.functionAtomType(atom)[0];
-        domain = intersect(domain, pathDomains.reduce(union, pathDomains[0]));
-    }
     SemType[] selectedCodomains = [];
     foreach var { pos } in paths {
         SemType[] codomains = [];
@@ -95,7 +94,7 @@ public function complexFunctionSignature(Context cx, SemType ty) returns Functio
         // not sure if the order of intersections matters, reverse starts with the smallest intersection
         var intersections = allPossibleIntersectionsWithUptoNMembers(cx, pos, pos.length()).reverse();
         foreach var [intersection_domain, intersection_codomain] in intersections {
-            SemType overlappingDomain = intersect(domain, intersection_domain);
+            SemType overlappingDomain = intersect(argTy, intersection_domain);
             if isEmpty(cx, overlappingDomain) {
                 continue;
             }
@@ -113,7 +112,32 @@ public function complexFunctionSignature(Context cx, SemType ty) returns Functio
         // I don't think this is possible since domain must contain at least the domains of individual the functions
         panic err:impossible("expect at least a single codomain");
     }
-    return createFunctionSignature(cx, domain, selectedCodomains.reduce(union, selectedCodomains[0]));
+    return selectedCodomains.reduce(union, selectedCodomains[0]);
+}
+
+public function functionDomain(Context cx, SemType funcTy) returns SemType? {
+    FunctionAtomicType? atomic = functionAtomicType(cx, funcTy);
+    if atomic != () {
+        return atomic[0];
+    }
+    SemType functionTy = intersect(funcTy, FUNCTION);
+    // only proper subtypes of function can have meaningful signatures
+    if isEmpty(cx, functionTy) || functionTy is BasicTypeBitSet {
+        return ();
+    }
+    BddPath[] paths = [];
+    bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
+    // only positive atoms have an effect on the equation
+    paths = paths.filter((each) => each.pos.length() > 0);
+    if paths.length() == 0 {
+        panic err:impossible("expect at least a single positive atom");
+    }
+    SemType domain = VAL;
+    foreach var { pos } in paths {
+        SemType[] pathDomains = from var atom in pos select cx.functionAtomType(atom)[0];
+        domain = intersect(domain, pathDomains.reduce(union, pathDomains[0]));
+    }
+    return domain;
 }
 
 // TODO: better name: we are trying to generate all possible intersections of the pos atoms
@@ -131,50 +155,6 @@ function allPossibleIntersectionsWithUptoNMembers(Context cx, Atom[] atoms, int 
         }
     }
     return result;
-}
-
-function createFunctionSignature(Context cx, SemType paramListType, SemType returnType) returns FunctionSignature {
-    var [paramTypes, restType] = deconstructParamType(cx, paramListType);
-    SemType? restParamType = restType == NEVER ? () : restType;
-    if restParamType != () {
-        ListDefinition listDefn = new;
-        paramTypes.push(defineListTypeWrapped(listDefn, cx.env, rest=restType));
-    }
-    return { returnType, paramTypes: paramTypes.cloneReadOnly(), restParamType };
-}
-
-function deconstructParamType(Context cx, SemType paramListType) returns [SemType[], SemType] {
-    // param list type is not atomic when the handling function intersections
-    ListAtomicType? listAtom = listAtomicType(cx, paramListType);
-    if listAtom != () {
-        SemType[] paramTypes = from int i in 0 ..< listAtom.members.fixedLength select listAtomicTypeMemberAtInnerVal(listAtom, i);
-        SemType restInnerVal = cellInnerVal(listAtom.rest);
-        return [paramTypes, restInnerVal];
-    }
-    // What I need,
-    // * number of fixed params
-    // * rest param type
-    // actual type is a union of the alternatives
-    ListAlternative[] alts = listAlternatives(cx, paramListType);
-    ListAtomicType[] listAtoms = [];
-    SemType[] restTypes = [];
-    int fixedLength = 0;
-    foreach var {pos, neg} in alts {
-        if neg.length() > 0 {
-            panic err:impossible("unexpected negation in param list type");
-        }
-        if pos != () {
-            listAtoms.push(pos);
-            fixedLength = int:max(fixedLength, pos.members.fixedLength);
-            restTypes.push(cellInnerVal(pos.rest));
-        }
-    }
-    SemType[] paramTypes = [];
-    foreach int i in 0 ..< fixedLength {
-        SemType[] types = from var atom in listAtoms select listAtomicTypeMemberAtInnerVal(atom, i);
-        paramTypes.push(types.reduce(union, types[0]));
-    }
-    return [paramTypes, restTypes.reduce(union, restTypes[0])];
 }
 
 public function functionSemType(Context cx, FunctionSignature signature) returns SemType {

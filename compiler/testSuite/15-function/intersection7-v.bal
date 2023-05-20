@@ -6,11 +6,13 @@ type Fx F1&F2;
 
 public function main() {
     Fx fx = foo;
-    2|3 r1 = fx(1);
+    1|2|3 r1 = fx(1);
     io:println(r1); // @output 2
     fx = bar;
-    io:println(fx(1)); // @output 2
-    io:println(fx("aa")); // @output 3
+    r1 = fx(1);
+    io:println(fx(r1)); // @output 2
+    2|3|4 r2 = fx("aa");
+    io:println(r2); // @output 3
 }
 
 function foo(int|string a) returns 2 {

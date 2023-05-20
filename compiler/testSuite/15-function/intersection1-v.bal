@@ -15,7 +15,7 @@ public function main() {
     io:println(r2); // @output 5
 
     Fy fy = foo;
-    int r3 = fy(2);
+    int|string r3 = fy(2);
     io:println(r3); // @output 3
 }
 
