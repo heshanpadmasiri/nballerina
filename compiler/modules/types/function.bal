@@ -121,9 +121,11 @@ public function functionDomain(Context cx, SemType funcTy) returns SemType? {
         return atomic[0];
     }
     SemType functionTy = intersect(funcTy, FUNCTION);
-    // only proper subtypes of function can have meaningful signatures
-    if isEmpty(cx, functionTy) || functionTy is BasicTypeBitSet {
+    if isEmpty(cx, functionTy) {
         return ();
+    }
+    if functionTy is BasicTypeBitSet {
+        return LIST;
     }
     BddPath[] paths = [];
     bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});

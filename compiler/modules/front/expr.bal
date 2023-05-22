@@ -1453,17 +1453,10 @@ function codeGenFunctionCallExpr(ExprContext cx, bir:BasicBlock bb, s:FunctionCa
     return codeGenCall(cx, curBlock, func, func.signature.returnType, args, expr.qNamePos);
 }
 
-// #TODO: see if we can more tightly intergrade this with the normal function call
+// TODO: see if we can more tightly intergrade this with the normal function call
 function codeGenComplexFunctionCall(ExprContext cx, bir:BasicBlock bb, s:FunctionCallExpr expr, bir:Register funcRegister) returns CodeGenError|ExprEffect {
-    // Get function type (type of the register)
+    t:Context tc = cx.mod.tc;
     t:SemType funcTy = funcRegister.semType;
-    // Get the domain
-    // -- I don't this we need the damain here (/ correct) instead we should generate arguments without type and have the
-    // -- well typed chekc figure out if the arugments are of wrong type
-    // -- TODO: also revert changes to arguments generation (what we need is a method to generate arguments with / without expected types)
-    // -- -- In the second case we also need to keep track of the result types
-    // since this is an indirect call I don't think we need to handle rest args (i.e put them in a list)
-    // Generate the arguments ~~(use the domain to type check)~~
     bir:Operand[] args = [];
     bir:BasicBlock curBlock = bb;
     foreach s:Expr argExpr in expr.args {
@@ -1471,13 +1464,11 @@ function codeGenComplexFunctionCall(ExprContext cx, bir:BasicBlock bb, s:Functio
         args.push(arg);
         curBlock = nextBlock;
     }
-    // Generate the argument type (as a list semtype)
-    t:SemType argType = t:tupleTypeWrapped(cx.mod.tc.env, ...from var arg in args select arg.semType);
-    // Do the well typed check
-    // * -> well typed check should verify if we don't have enough arguments as well
-    // Figure out the return type (we have this implemented already)
-    t:SemType returnType = <t:SemType>t:functionReturnType(cx.mod.tc, funcTy, argType);
-    // Once we have the return type we should be able to use codeGenCallIndirect
+    t:SemType argType = t:tupleTypeWrappedRo(tc.env, ...from var arg in args select arg.semType);
+    if !t:isSubtype(tc, argType, <t:SemType>t:functionDomain(tc, funcTy)) {
+        return cx.semanticErr("incorrect type for arguments", s:range(expr));
+    }
+    t:SemType returnType = <t:SemType>t:functionReturnType(tc, funcTy, argType);
     return codeGenCallIndirect(cx, curBlock, funcRegister, returnType, args, expr.qNamePos);
 }
 

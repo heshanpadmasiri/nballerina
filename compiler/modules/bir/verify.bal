@@ -444,7 +444,8 @@ function verifyCall(VerifyContext vc, CallInsn insn) returns err:Internal? {
 }
 
 function verifyCallIndirect(VerifyContext vc, CallIndirectInsn insn) returns err:Internal? {
-    t:FunctionAtomicType? atomic = t:functionAtomicType(vc.typeContext(), insn.operands[0].semType);
+    t:SemType funcTy = insn.operands[0].semType;
+    t:FunctionAtomicType? atomic = t:functionAtomicType(vc.typeContext(), funcTy);
     if atomic != () {
         t:FunctionSignature signature = t:functionSignature(vc.typeContext(), atomic);
         return verifyFunctionCallArgs(vc, signature.paramTypes, insn);
