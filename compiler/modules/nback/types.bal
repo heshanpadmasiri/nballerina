@@ -27,8 +27,9 @@ final llvm:StructType LLVM_FUNCTION_SIGNATURE = llvm:structType([llvm:pointerTyp
                                                                  LLVM_INT,
                                                                  llvm:pointerType(LLVM_MEMBER_TYPE)]);
 
-final llvm:StructType LLVM_FUNCTION_VALUE = llvm:structType([llvm:pointerType(llvm:functionType("void", [])),
-                                                             llvm:pointerType(LLVM_FUNCTION_SIGNATURE)]);
+final llvm:StructType LLVM_FUNCTION_VALUE = llvm:structType([llTypeIdDescPtrType,
+                                                             llvm:pointerType(LLVM_FUNCTION_SIGNATURE),
+                                                             llvm:pointerType(llvm:functionType("void", []))]);
 final llvm:PointerType LLVM_FUNCTION_PTR = llvm:pointerType(LLVM_FUNCTION_VALUE, 1);
 
 // This is an approximation, to share type between init.bal and types.bal
