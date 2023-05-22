@@ -1463,7 +1463,8 @@ function codeGenComplexFunctionCall(ExprContext cx, bir:BasicBlock bb, s:Functio
         curBlock = nextBlock;
     }
     t:SemType argTypes = t:tupleTypeWrappedRo(tc.env, ...from var arg in args select arg.semType);
-    if !t:isSubtype(tc, argTypes, <t:SemType>t:functionDomain(tc, funcTy)) {
+    t:SemType? paramType = t:functionParamType(tc, funcTy);
+    if paramType == () || !t:isSubtype(tc, argTypes, paramType) {
         return cx.semanticErr("incorrect type for arguments", s:range(expr));
     }
     t:SemType returnType = <t:SemType>t:functionReturnType(tc, funcTy, argTypes);

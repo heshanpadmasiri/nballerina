@@ -73,48 +73,7 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
     return signature;
 }
 
-public function functionReturnType(Context cx, SemType funcTy, SemType argTy) returns SemType? {
-    SemType functionTy = intersect(funcTy, FUNCTION);
-    // Since we can only call proper subtypes of function it is safe to ignore handling base type as well
-    if isEmpty(cx, functionTy) || functionTy is BasicTypeBitSet {
-        return ();
-    }
-    BddPath[] paths = [];
-    bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
-    // only positive atoms have an effect on the equation
-    paths = paths.filter((each) => each.pos.length() > 0);
-    if paths.length() == 0 {
-        panic err:impossible("expect at least a single positive atom");
-    }
-    SemType[] selectedCodomains = [];
-    foreach var { pos } in paths {
-        SemType[] codomains = [];
-        SemType currentlyCoveredDomain = NEVER;
-        // not sure if the order of intersections matters, reverse starts with the smallest intersection
-        var intersections = allPossibleIntersectionsWithUptoNMembers(cx, pos, pos.length()).reverse();
-        foreach var [intersection_domain, intersection_codomain] in intersections {
-            SemType overlappingDomain = intersect(argTy, intersection_domain);
-            if isEmpty(cx, overlappingDomain) {
-                continue;
-            }
-            // Check if this domain cover something in domain not already covered
-            if !isEmpty(cx, diff(overlappingDomain, currentlyCoveredDomain)) {
-                currentlyCoveredDomain = union(overlappingDomain, currentlyCoveredDomain);
-                codomains.push(intersection_codomain);
-            }
-        }
-        if codomains.length() > 0 {
-            selectedCodomains.push(codomains.reduce(intersect, codomains[0]));
-        }
-    }
-    if selectedCodomains.length() == 0 {
-        // I don't think this is possible if the function call is well typed
-        panic err:impossible("expect at least a single codomain");
-    }
-    return selectedCodomains.reduce(union, selectedCodomains[0]);
-}
-
-public function functionDomain(Context cx, SemType funcTy) returns SemType? {
+public function functionParamType(Context cx, SemType funcTy) returns SemType? {
     FunctionAtomicType? atomic = functionAtomicType(cx, funcTy);
     if atomic != () {
         return atomic[0];
@@ -128,31 +87,72 @@ public function functionDomain(Context cx, SemType funcTy) returns SemType? {
     }
     BddPath[] paths = [];
     bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
-    // only positive atoms have an effect on the equation
+    // Only positive atoms have an effect on the equation
     paths = paths.filter((each) => each.pos.length() > 0);
     if paths.length() == 0 {
         panic err:impossible("expect at least a single positive atom");
     }
-    SemType domain = VAL;
+    SemType paramTy = VAL;
     foreach var { pos } in paths {
-        SemType[] pathDomains = from var atom in pos select cx.functionAtomType(atom)[0];
-        domain = intersect(domain, pathDomains.reduce(union, pathDomains[0]));
+        SemType[] intersectionParamTypes = from var atom in pos select cx.functionAtomType(atom)[0];
+        paramTy = intersect(paramTy, intersectionParamTypes.reduce(union, intersectionParamTypes[0]));
     }
-    return domain;
+    return paramTy;
 }
 
-// TODO: better name: we are trying to generate all possible intersections of the pos atoms
-// also this is not efficient since we ignore the intersection of codomains if domain don't meet requirements
-function allPossibleIntersectionsWithUptoNMembers(Context cx, Atom[] atoms, int n) returns [SemType, SemType][] {
+public function functionReturnType(Context cx, SemType funcTy, SemType argTy) returns SemType? {
+    SemType functionTy = intersect(funcTy, FUNCTION);
+    // Since we can only call proper subtypes of function it is safe to ignore handling base type
+    if isEmpty(cx, functionTy) || functionTy is BasicTypeBitSet {
+        return ();
+    }
+    BddPath[] paths = [];
+    bddPaths(<Bdd>getComplexSubtypeData(functionTy, BT_FUNCTION), paths, {});
+    paths = paths.filter((each) => each.pos.length() > 0);
+    if paths.length() == 0 {
+        panic err:impossible("expect at least a single positive atom");
+    }
+    SemType[] selectedReturnTypes = [];
+    foreach var { pos } in paths {
+        SemType[] returnTypes = [];
+        SemType currentlyCoveredParamTy = NEVER;
+        // Not sure if the order of intersections matters, reverse starts with the smallest intersection
+        var intersections = allPossibleFunctionAtomIntersections(cx, pos).reverse();
+        foreach var [intersectionParamTy, intersectionReturnTy] in intersections {
+            SemType overlappingParamTy = intersect(argTy, intersectionParamTy);
+            if isEmpty(cx, overlappingParamTy) {
+                continue;
+            }
+            // Check if this intersection covers something new
+            if !isEmpty(cx, diff(overlappingParamTy, currentlyCoveredParamTy)) {
+                currentlyCoveredParamTy = union(overlappingParamTy, currentlyCoveredParamTy);
+                returnTypes.push(intersectionReturnTy);
+            }
+        }
+        if returnTypes.length() > 0 {
+            selectedReturnTypes.push(returnTypes.reduce(intersect, returnTypes[0]));
+        }
+    }
+    if selectedReturnTypes.length() == 0 {
+        // I don't think this is possible if the function call is well typed
+        return ();
+    }
+    return selectedReturnTypes.reduce(union, selectedReturnTypes[0]);
+}
+
+function allPossibleFunctionAtomIntersections(Context cx, Atom[] atoms) returns [SemType, SemType][] {
+    return allPossibleIntersectionsInner(cx, atoms, atoms.length());
+}
+function allPossibleIntersectionsInner(Context cx, Atom[] atoms, int n) returns [SemType, SemType][] {
     if n == 1 {
         // cloneWithType to remove the readonly part from functionAtomType
         return from var atom in atoms select checkpanic cx.functionAtomType(atom).cloneWithType([SemType, SemType]);
     }
-    [SemType, SemType][] result = allPossibleIntersectionsWithUptoNMembers(cx, atoms, n - 1);
-    foreach var [domain, codomain] in result {
+    [SemType, SemType][] result = allPossibleIntersectionsInner(cx, atoms, n - 1);
+    foreach var [paramTy, returnTy] in result {
         foreach Atom atom in atoms {
-            var [domain_i, codomain_i] = cx.functionAtomType(atom);
-            result.push([intersect(domain, domain_i), intersect(codomain, codomain_i)]);
+            var [atomParamTy, atomReturnTy] = cx.functionAtomType(atom);
+            result.push([intersect(paramTy, atomParamTy), intersect(returnTy, atomReturnTy)]);
         }
     }
     return result;

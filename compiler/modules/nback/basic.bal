@@ -250,11 +250,11 @@ function buildCallIndirect(llvm:Builder builder, Scaffold scaffold, bir:CallIndi
     t:FunctionSignature signature = t:functionSignature(tc, atomic);
     llvm:PointerType fnStructPtrTy = llvm:pointerType(functionValueType(signature));
     llvm:ConstPointerValue llSignature = scaffold.getFunctionSignatureValue(signature);
+    llvm:Value isExact = buildRuntimeFunctionCall(builder, scaffold, functionIsExactFunction,
+                                                  [llSignature, builder.bitCast(unTaggedPtr, LLVM_FUNCTION_PTR)]);
     llvm:PointerValue funcStructPtr = builder.bitCast(builder.addrSpaceCast(unTaggedPtr,
                                                                             LLVM_TAGGED_PTR_WITHOUT_ADDR_SPACE),
                                                       fnStructPtrTy);
-    llvm:Value isExact = buildRuntimeFunctionCall(builder, scaffold, functionIsExactFunction,
-                                                  [llSignature, builder.bitCast(unTaggedPtr, LLVM_FUNCTION_PTR)]);
     llvm:BasicBlock ifExact = scaffold.addBasicBlock();
     llvm:BasicBlock ifNotExact = scaffold.addBasicBlock();
     var { paramTypes, restParamType, returnType } = signature;
