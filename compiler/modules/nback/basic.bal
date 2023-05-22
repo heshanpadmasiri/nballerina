@@ -231,34 +231,33 @@ function buildCall(llvm:Builder builder, Scaffold scaffold, bir:CallInsn insn) r
 
 function buildCallIndirect(llvm:Builder builder, Scaffold scaffold, bir:CallIndirectInsn insn) returns BuildError? {
     t:Context tc = scaffold.typeContext();
-    t:SemType[] paramTypes;
-    t:SemType returnType;
-    t:SemType? restParamType;
     t:SemType funcTy = insn.operands[0].semType;
-    t:FunctionAtomicType? atomic = t:functionAtomicType(tc, funcTy);
-    if atomic != () {
-        { paramTypes, returnType, restParamType } = t:functionSignature(tc, atomic);
-    }
-    else {
-        paramTypes = from int i in 1 ..< insn.operands.length() select insn.operands[i].semType;
-        returnType = <t:SemType>t:functionReturnType(tc, funcTy, t:tupleTypeWrapped(tc.env, ...paramTypes));
-        restParamType = ();
-    }
-    // TODO: refactor these functions to work without a signature
-    t:FunctionSignature signature = { paramTypes: paramTypes.cloneReadOnly(), returnType, restParamType };
-    llvm:PointerType fnStructPtrTy = llvm:pointerType(functionValueType(signature));
-    llvm:ConstPointerValue llSignature = scaffold.getFunctionSignatureValue(signature);
+    llvm:BasicBlock afterCall = scaffold.addBasicBlock();
     llvm:PointerValue unTaggedPtr = <llvm:PointerValue>builder.call(scaffold.getIntrinsicFunction("ptrmask.p1.i64"),
                                                                     [<llvm:PointerValue>builder.load(scaffold.address(insn.operands[0])),
                                                                      constInt(scaffold, POINTER_MASK)]);
-    llvm:Value isExact = buildRuntimeFunctionCall(builder, scaffold, functionIsExactFunction,
-                                                  [llSignature, builder.bitCast(unTaggedPtr, LLVM_FUNCTION_PTR)]);
+    t:FunctionAtomicType? atomic = t:functionAtomicType(tc, funcTy);
+    if atomic == () {
+        llvm:PointerValue funcStructPtr = builder.bitCast(builder.addrSpaceCast(unTaggedPtr,
+                                                                                LLVM_TAGGED_PTR_WITHOUT_ADDR_SPACE),
+                                                          llvm:pointerType(LLVM_FUNCTION_VALUE));
+        t:SemType [] paramTypes = from int i in 1 ..< insn.operands.length() select insn.operands[i].semType;
+        check buildNotExactCall(builder, scaffold, insn, afterCall, funcStructPtr, paramTypes, (),
+                                <t:SemType>t:functionReturnType(tc, funcTy, t:tupleTypeWrappedRo(tc.env, ...paramTypes)));
+        builder.positionAtEnd(afterCall);
+        return;
+    }
+    t:FunctionSignature signature = t:functionSignature(tc, atomic);
+    llvm:PointerType fnStructPtrTy = llvm:pointerType(functionValueType(signature));
+    llvm:ConstPointerValue llSignature = scaffold.getFunctionSignatureValue(signature);
     llvm:PointerValue funcStructPtr = builder.bitCast(builder.addrSpaceCast(unTaggedPtr,
                                                                             LLVM_TAGGED_PTR_WITHOUT_ADDR_SPACE),
                                                       fnStructPtrTy);
+    llvm:Value isExact = buildRuntimeFunctionCall(builder, scaffold, functionIsExactFunction,
+                                                  [llSignature, builder.bitCast(unTaggedPtr, LLVM_FUNCTION_PTR)]);
     llvm:BasicBlock ifExact = scaffold.addBasicBlock();
     llvm:BasicBlock ifNotExact = scaffold.addBasicBlock();
-    llvm:BasicBlock afterCall = scaffold.addBasicBlock();
+    var { paramTypes, restParamType, returnType } = signature;
     builder.condBr(isExact, ifExact, ifNotExact);
     builder.positionAtEnd(ifExact);
     check buildExactCall(builder, scaffold, insn, afterCall, funcStructPtr, paramTypes, returnType);

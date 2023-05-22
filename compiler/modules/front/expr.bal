@@ -1415,7 +1415,6 @@ function codeGenFunctionCallExpr(ExprContext cx, bir:BasicBlock bb, s:FunctionCa
         }
     }
     else {
-        // FIXME: we need to handle case where imported functions are union type as well?
         func = check genImportedFunctionRef(cx, prefix, expr.funcName, expr.qNamePos);
     }
     bir:BasicBlock curBlock = bb;
@@ -1453,7 +1452,6 @@ function codeGenFunctionCallExpr(ExprContext cx, bir:BasicBlock bb, s:FunctionCa
     return codeGenCall(cx, curBlock, func, func.signature.returnType, args, expr.qNamePos);
 }
 
-// TODO: see if we can more tightly intergrade this with the normal function call
 function codeGenComplexFunctionCall(ExprContext cx, bir:BasicBlock bb, s:FunctionCallExpr expr, bir:Register funcRegister) returns CodeGenError|ExprEffect {
     t:Context tc = cx.mod.tc;
     t:SemType funcTy = funcRegister.semType;
@@ -1464,11 +1462,11 @@ function codeGenComplexFunctionCall(ExprContext cx, bir:BasicBlock bb, s:Functio
         args.push(arg);
         curBlock = nextBlock;
     }
-    t:SemType argType = t:tupleTypeWrappedRo(tc.env, ...from var arg in args select arg.semType);
-    if !t:isSubtype(tc, argType, <t:SemType>t:functionDomain(tc, funcTy)) {
+    t:SemType argTypes = t:tupleTypeWrappedRo(tc.env, ...from var arg in args select arg.semType);
+    if !t:isSubtype(tc, argTypes, <t:SemType>t:functionDomain(tc, funcTy)) {
         return cx.semanticErr("incorrect type for arguments", s:range(expr));
     }
-    t:SemType returnType = <t:SemType>t:functionReturnType(tc, funcTy, argType);
+    t:SemType returnType = <t:SemType>t:functionReturnType(tc, funcTy, argTypes);
     return codeGenCallIndirect(cx, curBlock, funcRegister, returnType, args, expr.qNamePos);
 }
 

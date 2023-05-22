@@ -73,7 +73,6 @@ public function functionSignature(Context cx, FunctionAtomicType atomic) returns
     return signature;
 }
 
-// TODO: check if the function is well typed
 public function functionReturnType(Context cx, SemType funcTy, SemType argTy) returns SemType? {
     SemType functionTy = intersect(funcTy, FUNCTION);
     // Since we can only call proper subtypes of function it is safe to ignore handling base type as well
@@ -109,7 +108,7 @@ public function functionReturnType(Context cx, SemType funcTy, SemType argTy) re
         }
     }
     if selectedCodomains.length() == 0 {
-        // I don't think this is possible since domain must contain at least the domains of individual the functions
+        // I don't think this is possible if the function call is well typed
         panic err:impossible("expect at least a single codomain");
     }
     return selectedCodomains.reduce(union, selectedCodomains[0]);
