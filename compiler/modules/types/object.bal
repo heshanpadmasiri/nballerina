@@ -44,19 +44,17 @@ function restMemberType(Env env) returns CellSemType {
 }
 
 function fieldMember(Env env, Member member) returns CellField {
-    return [member.name,
-            cellContaining(env,
-                           defineMappingTypeWrapped(new, env, [{ name: "value", ty: member.valueTy },
-                                                               { name: "kind", ty: MEMBER_KIND_FIELD }],
-                                                    NEVER))];
+    return { name: member.name,
+             ty: cellContaining(env, defineMappingTypeWrapped(new, env, [{ name: "value", ty: member.valueTy },
+                                                                         { name: "kind", ty: MEMBER_KIND_FIELD }],
+                                                              NEVER)) };
 }
 
 function methodMember(Env env, Member member) returns CellField {
-    return [member.name,
-            cellContaining(env,
-                           defineMappingTypeWrapped(new, env, [{ name: "value", ty: member.valueTy, ro: true },
-                                                               { name: "kind", ty: MEMBER_KIND_METHOD }],
-                                                    NEVER))];
+    return { name: member.name,
+             ty: cellContaining(env, defineMappingTypeWrapped(new, env, [{ name: "value", ty: member.valueTy, ro: true },
+                                                                         { name: "kind", ty: MEMBER_KIND_METHOD }],
+                                                              NEVER)) };
 }
 
 final BasicTypeOps objectOps = {
